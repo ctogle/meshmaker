@@ -10,6 +10,10 @@ class vec3:
         return cls(0, 0, 0)
 
     @classmethod
+    def U(cls):
+        return cls(1, 1, 1)
+
+    @classmethod
     def X(cls):
         return cls(1, 0, 0)
 
@@ -25,6 +29,9 @@ class vec3:
     def com(cls, pts):
         xs, ys, zs = zip(*[(p.x, p.y, p.z) for p in pts])
         return cls(sum(xs) / len(xs), sum(ys) / len(ys), sum(zs) / len(zs))
+
+    def xy(self):
+        return vec3(self.x, self.y, 0)
 
     def cp(self):
         return vec3(self.x, self.y, self.z)
@@ -53,6 +60,12 @@ class vec3:
         else:
             return vec3(self.x * o, self.y * o, self.z * o)
 
+    def scl(self, o):
+        if isinstance(o, vec3):
+            return self.set(self.x * o.x, self.y * o.y, self.z * o.z)
+        else:
+            return self.set(self.x * o, self.y * o, self.z * o)
+
     def __repr__(self):
         return 'vec3({:.4f}, {:.4f}, {:.4f})'.format(self.x, self.y, self.z)
 
@@ -61,6 +74,7 @@ class vec3:
 
     def set(self, x, y, z):
         self.x, self.y, self.z = x, y, z
+        return self
 
     def near(self, o, e=0.00001):
         """Snap to other if sufficiently near."""
@@ -79,6 +93,20 @@ class vec3:
         a = (np.arctan2(self.x, self.y) - np.arctan2(o.x, o.y))
         return a + 2 * np.pi if a < 0 else a
 
+    def dxy(self, o):
+        return (o - self).mag()
+
+    def dexy(self, u, v):
+        uv = (v - u)
+        c = self.dot(uv)
+        if c < u.dot(uv):
+            return self.dxy(u)
+        elif c > v.dot(uv):
+            return self.dxy(v)
+        else:
+            nm = uv.crs(vec3.Z())
+            return abs(self.dot(nm) - u.dot(nm))
+
     def tov(self, o):
         return o - self
 
@@ -95,16 +123,10 @@ class vec3:
             2 * (q.x * q.z - q.w * q.y),
             2 * (q.y * q.z + q.w * q.x),
             q.w ** 2 - q.x ** 2 - q.y ** 2 + q.z ** 2))
-        self.x = x
-        self.y = y
-        self.z = z
-        return self
+        return self.set(x, y, z)
 
     def trn(self, o):
-        self.x += o.x
-        self.y += o.y
-        self.z += o.z
-        return self
+        return self.set(self.x + o.x, self.y + o.y, self.z + o.z)
 
     def crs(self, o):
         return vec3(self.y * o.z - self.z * o.y,
@@ -115,11 +137,21 @@ class vec3:
         return self.x * o.x + self.y * o.y + self.z * o.z
 
     def mag(self):
-        return np.sqrt(self.x * self.x + self.y * self.y + self.z * self.z)
+        return np.sqrt(self.dot(self))
 
     def nrm(self):
         mag = self.mag()
-        return vec3(self.x / mag, self.y / mag, self.z / mag)
+        if mag > 0:
+            return vec3(self.x / mag, self.y / mag, self.z / mag)
+        else:
+            return vec3.O()
+
+    def nrmd(self):
+        mag = self.mag()
+        if mag > 0:
+            return self.set(self.x / mag, self.y / mag, self.z / mag)
+        else:
+            return self
 
     def lerp(self, o, d):
         return self + (self.tov(o) * d)
@@ -182,31 +214,45 @@ class vec3:
         """
         raise NotImplementedError
 
-    def onsxy(self, u, v):
-        raise NotImplementedError
+    def onsxy(self, u, v, ie=0):
+        #e = gtl.epsilon_c
+        e = 0.00001
+        if orient2d(self, u, v) == 0:
+            tn = (v - u)
+            a, b, c = self.dot(tn), u.dot(tn), v.dot(tn)
+            b, c = c, b if c < b else b, c
+            a = near(a, b, e)
+            a = near(a, b, e)
+            if b <= a and a <= c:
+                if (a - b < e) or (c - a < e):
+                    return (True if ie else False)
+
+                #if (s1.x != s2.x): # S is not  vertical
+                #if not gtl.isnear_c(s1.x,s2.x,gtl.epsilon_c): # S is not  vertical
+                #    if (s1.x <= self.x and self.x <= s2.x):return 1
+                #    if (s1.x >= self.x and self.x >= s2.x):return 1
+                #else: # S is vertical, so test y  coordinate
+                #    if (s1.y <= self.y and self.y <= s2.y):return 1
+                #    if (s1.y >= self.y and self.y >= s2.y):return 1
+
+        return False
 
     def inbxy(self, loop):
-        """
-        cdef int wn = 0
-        cdef int px
-        cdef int pcnt = len(ps)
-        cdef vec3 p1,p2
-        cdef float isleft
-        for px in range(pcnt):
-            p1,p2 = ps[px-1],ps[px]
-            if self.onsxy_c(p1,p2,1):return 0
-            isleft = ((p1.x-self.x)*(p2.y-self.y)-(p2.x-self.x)*(p1.y-self.y))
-            if p1.y <= self.y:
-                if p2.y > self.y:
+        wn = 0
+        for i in range(len(loop)):
+            u, v = loop[i - 1], loop[i]
+            if self.onsxy(u, v, 1):
+                return 0
+            isleft = ((u.x - self.x) * (v.y - self.y) - (v.x - self.x) * (u.y - self.y))
+            if u.y <= self.y:
+                if v.y > self.y:
                     if isleft > 0:
                         wn += 1
             else:
-                if p2.y <= self.y:
+                if v.y <= self.y:
                     if isleft < 0:
                         wn -= 1
         return wn
-        """
-        raise NotImplementedError
 
     def onbxy(self, loop):
         raise NotImplementedError

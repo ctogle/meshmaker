@@ -79,6 +79,24 @@ def sintsxyp(u, v, p, q, endpoint=True, endpoints=True, colinear=True, skew=True
                 return u + utov * t1
 
 
+def bbox(points):
+    a = points[0].cp()
+    if len(points) == 1:
+        b = a.cp()
+    else:
+        b = points[1].cp()
+        for p in points:
+            if p.x < a.x:
+                a.x = p.x
+            if p.y < a.y:
+                a.y = p.y
+            if p.x > b.x:
+                b.x = p.x
+            if p.y > b.y:
+                b.y = p.y
+    return a, b
+
+
 def subdivide_triangles(old):
     new = []
     for u, v, w in old:
@@ -128,6 +146,18 @@ def loop_contract(loop, r):
 def loop_split(loop, maxlen=10):
     newloop = []
     for i in range(len(loop)):
+        u, v = loop[i - 1], loop[i]
+        newloop.append(u.cp())
+        el = u.tov(v).mag()
+        if el > maxlen:
+            n = 1
+            while el / n > maxlen:
+                n += 1
+            newloop.extend(u.line(v, n - 1))
+    return newloop
+def edge_split(loop, maxlen=10):
+    newloop = []
+    for i in range(1, len(loop)):
         u, v = loop[i - 1], loop[i]
         newloop.append(u.cp())
         el = u.tov(v).mag()
