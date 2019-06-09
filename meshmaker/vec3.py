@@ -79,22 +79,34 @@ class vec3:
     def near(self, o, e=0.00001):
         """Snap to other if sufficiently near."""
         raise NotImplementedError
+        # TODO: this will snap for any axis despite the others...
         self.set(near(self.x, o.x, e),
                  near(self.y, o.y, e),
                  near(self.z, o.z, e))
 
     def isnear(self, o, e=0.00001):
-        x = isnear(self.x, o.x, e)
-        y = isnear(self.y, o.y, e)
-        z = isnear(self.z, o.z, e)
-        return x and y and z
+        if isnear(self.x, o.x, e):
+            if isnear(self.y, o.y, e):
+                if isnear(self.z, o.z, e):
+                    return True
+        return False
+
+    def axy(self, o):
+        cosa = (self.dot(o) / (self.mag() * o.mag()))
+        cosa = max(min(cosa, -1), 1)
+        return np.arccos(cosa)
 
     def saxy(self, o):
         a = (np.arctan2(self.x, self.y) - np.arctan2(o.x, o.y))
         return a + 2 * np.pi if a < 0 else a
 
-    def dxy(self, o):
+    def d(self, o):
         return (o - self).mag()
+
+    def dxy(self, o):
+        dx = o.x - self.x
+        dy = o.y - self.y
+        return np.sqrt(dx ** 2 + dy ** 2)
 
     def dexy(self, u, v):
         uv = (v - u)
@@ -214,13 +226,17 @@ class vec3:
         """
         raise NotImplementedError
 
-    def onsxy(self, u, v, ie=0):
+    def onsxy(self, u, v, ie=False):
         #e = gtl.epsilon_c
         e = 0.00001
         if orient2d(self, u, v) == 0:
             tn = (v - u)
             a, b, c = self.dot(tn), u.dot(tn), v.dot(tn)
-            b, c = c, b if c < b else b, c
+            try:
+                b, c = (c, b) if c < b else (b, c)
+            except:
+                print(a, b, c)
+                raise
             a = near(a, b, e)
             a = near(a, b, e)
             if b <= a and a <= c:
@@ -237,12 +253,12 @@ class vec3:
 
         return False
 
-    def inbxy(self, loop):
+    def inbxy(self, loop, ie=False):
         wn = 0
         for i in range(len(loop)):
             u, v = loop[i - 1], loop[i]
-            if self.onsxy(u, v, 1):
-                return 0
+            if self.onsxy(u, v, ie=True):
+                return 1 if ie else 0
             isleft = ((u.x - self.x) * (v.y - self.y) - (v.x - self.x) * (u.y - self.y))
             if u.y <= self.y:
                 if v.y > self.y:
@@ -254,8 +270,12 @@ class vec3:
                         wn -= 1
         return wn
 
-    def onbxy(self, loop):
-        raise NotImplementedError
+    def onbxy(self, loop, ie=False):
+        for i in range(len(loop)):
+            u, v = loop[i - 1], loop[i]
+            if self.onsxy(u, v, ie=ie):
+                return True
+        return False
 
     def incircle(self, a, b, c):
         """True if self is inside the circumcircle of the triangle a, b, c"""

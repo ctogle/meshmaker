@@ -10,6 +10,16 @@ def isnear(a, b, epsilon=0.00001):
     return 1 if (d * d) < epsilon else 0
 
 
+def periodic(a, b, c):
+    # TODO: handle c being > 1 period outside of [a, b)
+    if c < a:
+        return c + (b - a)
+    elif c >= b:
+        return c - (b - a)
+    else:
+        return c
+
+
 def inrng(u, v, w):
     u = near(near(u, v), w)
     return v < u and u < w
@@ -108,12 +118,51 @@ def subdivide_triangles(old):
     return new
 
 
+def slide(loop, n=1):
+    queue = loop[:] + loop[:n]
+    while len(queue) > n:
+        yield queue[:n]
+        queue.pop(0)
+
+
 def loop_area(loop):
     area = 0.0
     for i in range(len(loop)):
         u, v = loop[i - 1], loop[i]
         area -= (u.x + v.x) * (u.y - v.y) / 2.0
     return area
+
+
+def loop_normal(loop):
+    from .vec3 import vec3
+    pn = vec3.O()
+    for u, v, w in slide(loop, 3):
+        uv, vw = (v - u), (w - v)
+        alpha = uv.axy(vw)
+        pn.trn(uv.crs(vw).nrm())
+    return pn.nrm()
+
+
+def loop_contains(loop, other):
+    for p in loop:
+        if p.inbxy(other, True):
+            return False
+    for q in other:
+        if q.inbxy(loop, True):
+            return True
+    else:
+        return False
+
+
+def loop_exterior(loops):
+    """find the one loop in loops which contains the others"""
+    n_loops = len(loops)
+    exterior = 0
+    if n_loops > 1:
+        for i in range(1, n_loops):
+            if loop_contains(loops[i], loops[exterior]):
+                exterior = i
+    return exterior
 
 
 def loop_contract(loop, r):

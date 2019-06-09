@@ -1,141 +1,95 @@
+""""""
 import numpy as np
 from .vec3 import vec3
 
 
-class basis(vec3):
+class scalar_field:
+    """"""
 
-    epsilon = 0.00001
+    @staticmethod
+    def apply(img, tf, world):
+        local = tf.transform(world)
+        x = min(img.shape[1] - 1, int(local.x))
+        y = min(img.shape[0] - 1, int(local.y))
+        z = img[y, x]
+        return z
+
+    def __init__(self, tf, img):
+        self.tf = tf
+        self.img = img
+
+    def __call__(self, p):
+        return self.apply(self.img, self.tf, p)
+
+
+class vec3_field:
+    """"""
+
+    @staticmethod
+    def decay(decay, weight):
+        return lambda o, r: o * (weight * np.exp(-decay * r ** 2))
 
     @classmethod
-    def from_r_theta(cls, r, th):
-        a = r * np.cos(2 * th)
-        b = r * np.sin(2 * th)
-        return cls(a, b, 0)
+    def radial(cls, q, decay, weight):
+        decay = cls.decay(decay, weight)
+        def eigen(p):
+            return decay((p - q).nrm(), p.dxy(q))
+        return eigen
 
     @classmethod
-    def from_ab(cls, a, b):
-        return cls(a, b, 0)
+    def edge(cls, u, v, decay, weight):
+        decay = cls.decay(decay, weight)
+        tangent = (v - u).nrm()
+        normal = tangent.crs(vec3.Z()).nrm()
+        def eigen(p):
+            isleft = ((u.x - p.x) * (v.y - p.y) - (v.x - p.x) * (u.y - p.y))
+            return decay(normal * (1 if isleft else -1), p.dexy(u, v))
+            #return decay(tangent, p.dexy(u, v))
+        return eigen
 
-    def evalues(self):
-        d = self.mag()
-        return -d, d
+    @classmethod
+    def grid(cls, q, major, decay, weight):
+        decay = cls.decay(decay, weight)
+        def eigen(p):
+            return decay(major, p.dxy(q))
+        return eigen
 
-    def evectors(self):
-        if abs(self.y) < basis.epsilon:
-            if abs(self.x) < basis.epsilon:
-                #major, minor = vec3(0, 0, 0), vec3(0, 0, 0)
-                major, minor = None, None
-            else:
-                major, minor = vec3(1, 0, 0), vec3(0, 1, 0)
+    @classmethod
+    def topography(cls, terrain, weight):
+        dx, dy = np.gradient(terrain.img)
+        dx = scalar_field(terrain.tf, dx)
+        dy = scalar_field(terrain.tf, dy)
+        def eigen(p):
+            dpdx = dx(p)
+            dpdy = dy(p)
+            return vec3(dpdx, dpdy, 0) * weight * max(1, np.sqrt(dpdx ** 2 + dpdy ** 2))
+        return eigen
+
+    @classmethod
+    def parse_elements(cls, element, decay, weight):
+        if isinstance(element, vec3):
+            yield cls.radial(element, decay, weight)
+        elif isinstance(element, tuple):
+            yield cls.grid(element[0], element[1], decay, weight)
+        elif isinstance(element, list):
+            for u, v in slide(element, 2):
+                yield cls.edge(u, v, decay, weight)
+        elif isinstance(element, scalar_field):
+            yield cls.topography(element, weight)
         else:
-            e1, e2 = self.evalues()
-            major = vec3(self.y, e1 - self.x, 0)
-            minor = vec3(self.y, e2 - self.x, 0)
-        return major, minor
+            raise ValueError
 
+    @staticmethod
+    def apply(world, elements):
+        v = vec3.O()
+        for e in elements:
+            v += e(world)
+        return v
 
-def field_element(p_0, decay, weight):
-    def wrap(f):
-        def wrapped(p):
-            return f(p).scl(weight * np.exp(-decay * (p - p_0).mag() ** 2))
-        return wrapped
-    return wrap
+    def __new__(cls, elements):
+        methods = []
+        for e in elements:
+            methods.extend(list(cls.parse_elements(*e)))
+        return lambda p: cls.apply(p, methods)
 
-
-def radial_element(p_0, decay, weight):
-    @field_element(p_0, decay, weight)
-    def getbasis(p):
-        dpx = (p.x - p_0.x)
-        dpy = (p.y - p_0.y)
-        a = dpy * dpy - dpx * dpx
-        b = - 2 * dpx * dpy
-        return basis.from_ab(a, b).nrmd()
-    return getbasis
-
-
-def grid_element(p_0, decay, weight, major):
-    @field_element(p_0, decay, weight)
-    def getbasis(p):
-        d = major.cp().nrmd()
-        th = np.arctan2(d.y, d.x) + np.pi / 2.0
-        return basis.from_r_theta(1, th).nrmd()
-    return getbasis
-
-
-def topographical_element(weight, image, tform):
-    xgrad, ygrad = np.gradient(image)
-    ry, rx = image.shape
-    @field_element(vec3.O(), 0.0, weight)
-    def getbasis(wp):
-
-        ix, iy, iz = tform.wtoi(*wp)
-        i, j = min(rx - 1, int(rx * ix)), min(ry - 1, int(ry * iy))
-
-        gx, gy = xgrad[j, i], ygrad[j, i]
-        r = np.sqrt(gx ** 2 + gy ** 2)
-        th = np.arctan2(gy, gx) + np.pi / 2.0
-        return basis.from_r_theta(r, th).nrmd()
-    return getbasis
-
-
-def parse_element(element, decay, weight):
-    if isinstance(element, tuple):
-        yield topographical_element(weight, *element)
-    elif isinstance(element, list):
-        for j in range(1, len(element)):
-            u, v = element[j - 1], element[j]
-            yield grid_element(u.lerp(v, 0.5), decay, weight, u.tov(v).nrmd())
-    else:
-        yield radial_element(element, decay, weight)
-
-
-def parse_elements(elements):
-    field = []
-    for e, d, w in elements:
-        field.extend(list(parse_element(e, d, w)))
-    return field
-
-
-class field:
-
-    def __init__(self, elements):
-        self.elements = parse_elements(elements)
-        self.layers = len(self.elements)
-
-    def basis(self, p):
-        t = self.elements[0](p)
-        if self.layers > 1:
-            for e in self.elements[1:]:
-                t.trn(e(p))
-        return t.nrmd()
-
-    def trace(self, seed, max_length, max_steps, mode='major'):
-
-        def orient():
-            t = self.basis(p)
-            major, minor = t.evectors()
-            if mode == 'major':
-                return major
-            elif mode == 'minor':
-                return minor
-            else:
-                raise ValueError('unknown mode: "%s"' % mode)
-
-        def forward(last_dp):
-            direction = orient()
-            if direction:
-                if last_dp.dot(direction) < 0:
-                    direction.flp()
-                dp = direction.nrmd().uscl(max_length)
-            else:
-                dp = vec3(0, 0, 0)
-            p.trn(dp)
-            return dp
-
-        p, dp = seed
-        steps = 0
-        while steps < max_steps:
-            yield p.cp(), dp.cp()
-            dp = forward(dp)
-            steps += 1
 

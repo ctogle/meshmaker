@@ -52,8 +52,9 @@ class planargraph:
                 self.ae(u, v, epsilon)
 
 
-    def nv(self, p):
+    def nv(self, p, **properties):
         """new vertex"""
+        p.properties = properties
         new_vertex = len(self.vertices)
         self.vertices.append(p)
         self.vertex_count += 1
@@ -67,20 +68,22 @@ class planargraph:
             self.re(i, j)
         del self.rings[i]
 
-    def av(self, p, e=0.00001):
+    def fv(self, p, e=0.00001):
+        """find vertex"""
+        for i, v in enumerate(self.vertices):
+            #if v.isnear(p, e):
+            if v.dxy(p) < e:
+                return i
+
+    def av(self, p, e=0.00001, **properties):
         """add vertex
 
         if p is near an existing vertex, return that vertex
         if p is near an existing edge, bisect that edge and return new vertex
         """
-        new_vertex = None
-        if e > 0:
-            for i, v in enumerate(self.vertices):
-                if v.isnear(p, e):
-                    new_vertex = i
-                    break
+        new_vertex = self.fv(p, e) if e > 0 else None
         if new_vertex is None:
-            new_vertex = self.nv(p)
+            new_vertex = self.nv(p, **properties)
             for i, j in tuple(self.edge_lookup.keys()):
                 u, v = self.vertices[i], self.vertices[j]
                 if p.insxy(u, v):
@@ -89,13 +92,13 @@ class planargraph:
         return new_vertex
 
 
-    def ne(self, i, j):
+    def ne(self, i, j, **properties):
         """new edge"""
         i, j = (i, j) if (i < j) else (j, i)
         self.rings[i].add(j)
         self.rings[j].add(i)
         new_edge = len(self.edges)
-        self.edges.append((i, j))
+        self.edges.append((i, j, properties))
         self.edge_lookup[(i, j)] = new_edge
         self.edge_count += 1
         return new_edge
@@ -111,12 +114,14 @@ class planargraph:
 
     def se(self, i, j, k):
         """split edge"""
+        i, j = (i, j) if (i < j) else (j, i)
+        _, _, properties = self.edges[self.edge_lookup[(i, j)]]
         self.re(i, j)
-        u = self.ne(i, k)
-        v = self.ne(k, j)
+        u = self.ne(i, k, **properties)
+        v = self.ne(k, j, **properties)
         return u, v
 
-    def ae(self, i, j, e=0.00001):
+    def ae(self, i, j, e=0.00001, **properties):
         """add edge
 
         if (i, j) is an existing edge, return that edge
@@ -156,10 +161,11 @@ class planargraph:
                 ips.insert(0, i)
                 ips.append(j)
                 for k in range(1, len(ips)):
-                    new_edges.append(self.ne(ips[k - 1], ips[k]))
+                    new_edges.append(self.ne(ips[k - 1], ips[k], **properties))
                 return new_edges
             else:
-                return self.ne(i, j)
+                return self.ne(i, j, **properties)
+
 
     def destem(self):
         stems = []
@@ -182,6 +188,38 @@ class planargraph:
             raise ValueError(f'bad minlen: {minlen} (epsilon: {epsilon})')
         return minlen
 
+    def forked(self, i):
+        """"""
+        return not len(self.rings[i]) == 2
+
+    def forkorder(self, i):
+        """compute the topological distance to the nearest vertex of valence > 2"""
+        valence = len(self.rings[i])
+        if valence == 0:
+            min_order = 1
+        elif valence == 1:
+            a, = tuple(self.rings[i])
+            min_order = len(self.loop_until(i, a, 1, self.forked)) - 1
+        elif valence == 2:
+            a, b = tuple(self.rings[i])
+            n_a, n_b = len(self.rings[a]), len(self.rings[b])
+            if (n_a == 1 and n_b == 1) or (n_a > 2 or n_b > 2):
+                min_order = 1
+            elif n_a == 1:
+                min_order = len(self.loop_until(i, b, 1, self.forked)) - 1
+            elif n_b == 1:
+                min_order = len(self.loop_until(i, a, 1, self.forked)) - 1
+            else:
+                a = self.loop_until(i, a, 1, self.forked)
+                b = self.loop_until(i, b, 1, self.forked)
+                a = len(a) - 1 if len(self.rings[a[-1]]) > 1 else 1e10
+                b = len(b) - 1 if len(self.rings[b[-1]]) > 1 else 1e10
+                min_order = min(a, b)
+        else:
+            min_order = 0
+        return min_order
+
+
     def follow(self, i, j, z):
         ring = tuple(self.rings[j])
         n_ring = len(ring)
@@ -202,7 +240,22 @@ class planargraph:
             alphas = sorted(alphas, key=(lambda a: a[0]))
             return alphas[0 if z > 0 else -1][1]
 
+    def loop_until(self, i_0, j_0, z, f):
+        loop = [i_0, j_0]
+        i, j = i_0, j_0
+        while True:
+            k = self.follow(i, j, z)
+            if f(k):
+                loop.append(k)
+                break
+            else:
+                loop.append(k)
+                i = j
+                j = k
+        return tuple(loop)
+
     def loop(self, i_0, j_0, z):
+        # TODO: can this use self.loop_until?
         loop = [i_0, j_0]
         i, j = i_0, j_0
         while True:
@@ -219,7 +272,7 @@ class planargraph:
 
     def loops(self):
         loops = set()
-        for i, j in filter(lambda e: bool(e), self.edges):
+        for i, j, properties in filter(lambda e: bool(e), self.edges):
             loops.add(self.loop(i, j, -1))
         return list(loops)
 

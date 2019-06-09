@@ -45,15 +45,19 @@ def plot_pg(ax, pg, lw=3, ls='-', col='k', mk='o', annotate=True):
             continue
         ax.plot([v.x], [v.y], marker=mk, color=col)
         if annotate:
-            text = '%d\n%s' % (i, str(pg.rings[i]))
-            annotate_point(ax, v, text)
-    for i, j in filter(lambda e: bool(e), pg.edges):
+            text = v.properties.get('annotation')
+            if text is None:
+                text = str(pg.rings[i]) if len(pg.rings[i]) > 2 else ''
+            if text:
+                text = '%d\n%s' % (i, text)
+                annotate_point(ax, v, text)
+    for i, j, properties in (e for e in pg.edges if e is not None):
         u, v = pg.vertices[i], pg.vertices[j]
-        ax.plot([u.x, v.x], [u.y, v.y], ls=ls, lw=lw, color=col)
+        plot_edge(ax, u, v, lw=lw, ls=ls, col=col)
     return ax
 
 
-def plot_basis(ax, b, p, which=None):
+def __plot_basis(ax, b, p, which=None):
     l = 1.5
     major, minor = b.evectors()
     if (which == 'major' or not which) and major:
@@ -68,7 +72,7 @@ def plot_basis(ax, b, p, which=None):
     return ax
 
 
-def plot_field(ax, f, ps, which=None):
+def __plot_field(ax, f, ps, which=None):
     for p in ps:
         t = f.basis(p)
         plot_basis(ax, t, p, which=which)
