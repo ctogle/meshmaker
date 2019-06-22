@@ -40,6 +40,14 @@ def obj_file(model, mtl_path):
 
 
 def obj_world(prefix, models, textures):
+    """Write models and materials to disk in obj format (.obj/.mtl)
+
+    Args:
+        prefix (str): Prefix prepended to all paths.
+        models (seq): Iterable of model objects.
+        textures (dict): Mapping of material names to texture paths.
+
+    """
     os.makedirs(os.path.dirname(prefix), exist_ok=True)
     mtl_path = '{0}materials.mtl'.format(prefix)
     with open(mtl_path, 'w') as f:

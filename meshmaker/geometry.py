@@ -144,6 +144,8 @@ def loop_normal(loop):
 
 
 def loop_contains(loop, other):
+    #raise NotImplementedError('NOTE: current implementation is not reliable')
+    #print('NOTE: current implementation is not reliable')
     for p in loop:
         if p.inbxy(other, True):
             return False
@@ -168,6 +170,8 @@ def loop_exterior(loops):
 def loop_contract(loop, r):
     from .vec3 import vec3
     from .mesh import planargraph
+    if loop_normal(loop).z < 0:
+        loop.reverse()
     newloop = []
     for i in range(len(loop)):
         u, v, w = loop[i - 2], loop[i - 1], loop[i]
@@ -188,11 +192,24 @@ def loop_contract(loop, r):
     pg = planargraph(segs)
     pg.destem()
     loops = [[pg.vertices[i] for i in l] for l in pg.loops()]
+    for loop in loops:
+        if loop_normal(loop).z < 0:
+            loop.reverse()
     loops = sorted(loops, key=lambda l: abs(loop_area(l)), reverse=True)
     return loops[1]
 
 
-def loop_split(loop, maxlen=10):
+def loop_split(loop, maxlen):
+    """Return new loop where no edge is greater than maxlen in length.
+
+    Args:
+        loop (seq): Sequence of vec3 instances.
+        maxlen (float): Maximum edge length in resulting loop.
+
+    Returns:
+        list of new vec3 instances forming new loop.
+
+    """
     newloop = []
     for i in range(len(loop)):
         u, v = loop[i - 1], loop[i]
@@ -205,6 +222,7 @@ def loop_split(loop, maxlen=10):
             newloop.extend(u.line(v, n - 1))
     return newloop
 def edge_split(loop, maxlen=10):
+    raise NotImplementedError('is this trash?')
     newloop = []
     for i in range(1, len(loop)):
         u, v = loop[i - 1], loop[i]

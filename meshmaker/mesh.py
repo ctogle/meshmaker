@@ -1,8 +1,9 @@
 from .vec3 import vec3
-from .geometry import sintsxyp
+from .geometry import sintsxyp, loop_area, loop_normal
 from collections import defaultdict
 
 from .plt import plot, plot_pg, plot_point, plot_edge
+
 
 class trimesh:
 
@@ -182,7 +183,8 @@ class planargraph:
         lengths = []
         for i in self.rings:
             for j in self.rings[i]:
-                lengths.append(self.vertices[i].tov(self.vertices[j]).mag())
+                l = (self.vertices[j] - self.vertices[i]).mag()
+                lengths.append(l)
         minlen = min(lengths)
         if epsilon and minlen < epsilon:
             raise ValueError(f'bad minlen: {minlen} (epsilon: {epsilon})')
@@ -248,6 +250,8 @@ class planargraph:
             if f(k):
                 loop.append(k)
                 break
+            elif k == j_0 and j == i_0:
+                break
             else:
                 loop.append(k)
                 i = j
@@ -275,6 +279,16 @@ class planargraph:
         for i, j, properties in filter(lambda e: bool(e), self.edges):
             loops.add(self.loop(i, j, -1))
         return list(loops)
+
+    def polygon(self):
+        loops = [[self.vertices[i].cp() for i in l] for l in self.loops()]
+        for loop in loops:
+            if loop_normal(loop).z < 0:
+                loop.reverse()
+            assert (not loop_normal(loop).z < 0)
+        loops = sorted(loops, key=lambda l: abs(loop_area(l)), reverse=True)
+        eloop = loops.pop(0)
+        return eloop, loops
 
 
 if __name__ == '__main__':
