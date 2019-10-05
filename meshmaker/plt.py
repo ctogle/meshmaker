@@ -53,7 +53,8 @@ def plot_pg(ax, pg, lw=3, ls='-', col='k', mk='o', annotate=True):
                 annotate_point(ax, v, text)
     for i, j, properties in (e for e in pg.edges if e is not None):
         u, v = pg.vertices[i], pg.vertices[j]
-        plot_edge(ax, u, v, lw=lw, ls=ls, col=col)
+        if u is not None and v is not None:
+            plot_edge(ax, u, v, lw=lw, ls=ls, col=col)
     return ax
 
 

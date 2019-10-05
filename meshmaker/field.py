@@ -3,7 +3,7 @@ from meshmaker.vec3 import vec3
 from meshmaker.quat import quat
 from meshmaker.tform import tform
 from meshmaker.img import perlin, proximal, normalize
-from meshmaker.geometry import slide
+from meshmaker.geometry import slide, isnear
 
 
 class field:
@@ -83,11 +83,12 @@ class image_field(scalar_field):
 class height_field(image_field):
     """"""
 
-    def __new__(cls, origin, radius, resolution, landmasses, dz=1):
+    def __new__(cls, origin, radius, resolution, landmasses,
+                dz=1, noise=False, prox_f=None):
         pixels = int(2 * radius * resolution)
         tf = cls.wtoi(origin, radius, pixels)
-        n = perlin(pixels, 16 * 8, 8, 4)
-        f = lambda d: max(0, d) ** 0.8
+        n = perlin(pixels, 16 * 8, 8, 4) if noise else 1.0
+        f = (lambda d: max(0, d) ** 0.8) if prox_f is None else prox_f
         p = [proximal(pixels, tf.transform(lm), f) for lm in landmasses]
         p = sum(p)
         p = normalize(p)
@@ -135,10 +136,12 @@ class vec3_field(field):
     def edge(cls, u, v, decay, weight):
         decay = cls.decay(decay, weight)
         tangent = (v - u).nrm()
-        normal = tangent.crs(vec3.Z()).nrm()
+        #normal = tangent.crs(vec3.Z()).nrm()
+        normal = tangent.crs(vec3.Z()).nrm().fp()
         def eigen(p):
             isleft = ((u.x - p.x) * (v.y - p.y) - (v.x - p.x) * (u.y - p.y))
-            return decay(normal * (1 if isleft else -1), p.dexy(u, v))
+            return decay(normal * (1.0 if isleft else -1.0), p.dexy(u, v))
+            #return decay(normal * (-1 if isleft else 1), p.dexy(u, v))
             #return decay(tangent, p.dexy(u, v)) 
         return eigen
 
@@ -168,8 +171,18 @@ class trace_field(vec3_field):
         fd = super().__new__(cls, methods)
         def f(p):
             """trace a sequence of new edges using fields"""
+            last_fd = fd(p).nrm()
+
             while True:
-                q = p + (fd(p).nrm() * ds).rot(quat.av(alpha, vec3.Z()))
+
+                next_fd = fd(p).nrm()
+                sa = last_fd.saxy(next_fd)
+                last_fd = next_fd
+                if isnear(sa, np.pi):
+                    print('singularity flip')
+                    next_fd = next_fd.fp()
+
+                q = p + (next_fd * ds).rot(quat.av(alpha, vec3.Z()))
                 yield q
                 p = q
         return f

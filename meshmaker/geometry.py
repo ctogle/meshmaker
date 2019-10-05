@@ -1,3 +1,4 @@
+import numpy as np
 
 
 def near(a, b, epsilon=0.00001):
@@ -37,6 +38,7 @@ def orient2d(a, b, c):
     return near(det, 0)
 
 
+
 def sintsxyp(u, v, p, q, endpoint=True, endpoints=True, colinear=True, skew=True):
     utov, ptoq, utop = u.tov(v), p.tov(q), u.tov(p)
     uvcrspq, upcrsuv = near(utov.crs(ptoq).z, 0), near(utop.crs(utov).z, 0)
@@ -44,9 +46,12 @@ def sintsxyp(u, v, p, q, endpoint=True, endpoints=True, colinear=True, skew=True
     if uvcrspq == 0 and upcrsuv == 0:
         if colinear:
             uv, pq = utov.mag(), ptoq.mag()
-            uvdotpq = uv.dot(pq), up.dot(uv)
-            updotuv = up.dot(uv)
-            assert(not (uvdotpq == 0))
+            #uvdotpq = uv.dot(pq), up.dot(uv)
+            uvdotpq = utov.dot(ptoq)
+            updotuv = utop.dot(utov)
+            # wtf is with this???
+            #assert(not (uvdotpq == 0))
+            # wtf is with this???
             t0 = near(near(updotuv / (uv ** 2), 0), 1)
             t1 = near(near(t0 + uvdotpq / (uv ** 2), 0), 1)
             if uvdotpq < 0:
@@ -107,6 +112,19 @@ def bbox(points):
     return a, b
 
 
+def circumscribe_triangle(p1, p2, p3):
+    """given 3 points and a plane, determine the center and radius
+    of the circumcenter found in the plane plane by projecting p1,p2,p3
+    in the plane"""
+    e1, e2 = (p1.xy() - p3.xy()), (p2.xy() - p3.xy())
+    th = e1.ang(e2)
+    cr = p1.dxy(p2) / (2 * np.sin(th))
+    cp = (e2 * e1.mag()) - (e1 * e2.mag())
+    e3 = e1.crs(e2)
+    fp = p3 + cp.crs(e3) * (1 / (e3.dot(e3) * 2.0))
+    return fp, cr
+
+
 def subdivide_triangles(old):
     new = []
     for u, v, w in old:
@@ -138,8 +156,10 @@ def loop_normal(loop):
     pn = vec3.O()
     for u, v, w in slide(loop, 3):
         uv, vw = (v - u), (w - v)
-        alpha = uv.axy(vw)
-        pn.trn(uv.crs(vw).nrm())
+        alpha = uv.ang(vw)
+        if alpha > 0:
+            pn.trn(uv.crs(vw).nrm())
+    assert not pn.isO(), 'zero vector in loop_normal!'
     return pn.nrm()
 
 
@@ -154,6 +174,18 @@ def loop_contains(loop, other):
             return True
     else:
         return False
+
+
+def loop_contains_triangle(loop, a, b, c):
+    if not (a.inbxy(loop) or a.onbxy(loop, ie=True)):
+        return False
+    elif not (b.inbxy(loop) or b.onbxy(loop, ie=True)):
+        return False
+    elif not (c.inbxy(loop) or c.onbxy(loop, ie=True)):
+        return False
+    else:
+        from .vec3 import vec3
+        return vec3.com((a, b, c)).inbxy(loop)
 
 
 def loop_exterior(loops):
@@ -236,14 +268,16 @@ def edge_split(loop, maxlen=10):
     return newloop
 
 
-def loop_smooth(loop, weight=0.1):
+def loop_smooth(loop, weight=0.1, iterations=1):
     from .vec3 import vec3
-    dps = []
-    for i in range(len(loop)):
-        u, v, w = loop[i - 2], loop[i - 1], loop[i]
-        dps.append((vec3.com((u, w)) - v) * weight)
-    dps.append(dps.pop(0))
-    return [(p + dp) for p, dp in zip(loop, dps)]
+    for j in range(iterations):
+        dps = []
+        for i in range(len(loop)):
+            u, v, w = loop[i - 2], loop[i - 1], loop[i]
+            dps.append((vec3.com((u, w)) - v) * weight)
+        dps.append(dps.pop(0))
+        loop = [(p + dp) for p, dp in zip(loop, dps)]
+    return loop
 
 
 if __name__ == '__main__':

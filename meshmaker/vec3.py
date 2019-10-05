@@ -1,6 +1,6 @@
 from .geometry import near, isnear, orient2d
-from .quat import quat
 import numpy as np
+import math
 
 
 class vec3:
@@ -29,6 +29,12 @@ class vec3:
     def com(cls, pts):
         xs, ys, zs = zip(*[(p.x, p.y, p.z) for p in pts])
         return cls(sum(xs) / len(xs), sum(ys) / len(ys), sum(zs) / len(zs))
+
+    def isnan(self):
+        return math.isnan(self.x) or math.isnan(self.y) or math.isnan(self.z)
+
+    def isO(self):
+        return self.x == 0 and self.y == 0 and self.z == 0
 
     def xy(self):
         return vec3(self.x, self.y, 0)
@@ -91,9 +97,9 @@ class vec3:
                     return True
         return False
 
-    def axy(self, o):
+    def ang(self, o):
         cosa = (self.dot(o) / (self.mag() * o.mag()))
-        cosa = max(min(cosa, -1), 1)
+        cosa = min(max(cosa, -1), 1)
         return np.arccos(cosa)
 
     def saxy(self, o):
@@ -169,6 +175,7 @@ class vec3:
         return self + (self.tov(o) * d)
 
     def ring(self, r, n, inscribe=True):
+        from .quat import quat
         alpha = np.pi * (2.0 / n)
         sr = r if inscribe else r / np.cos(alpha / 2.0)
         z = vec3(0, 0, 1)
@@ -279,11 +286,11 @@ class vec3:
 
     def incircle(self, a, b, c):
         """True if self is inside the circumcircle of the triangle a, b, c"""
-        m11, m12 = a.x - d.x, a.y - d.y
+        m11, m12 = a.x - self.x, a.y - self.y
         m13 = m11 * m11 + m12 * m12
-        m21, m22 = b.x - d.x, b.y - d.y
+        m21, m22 = b.x - self.x, b.y - self.y
         m23 = m21 * m21 + m22 * m22
-        m31, m32 = c.x - d.x, c.y - d.y
+        m31, m32 = c.x - self.x, c.y - self.y
         m33 = m31 * m31 + m32 * m32
         det1 = m11 * (m22 * m33 - m23 * m32)
         det2 = m12 * (m21 * m33 - m23 * m31)

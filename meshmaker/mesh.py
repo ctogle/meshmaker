@@ -1,5 +1,7 @@
 from .vec3 import vec3
-from .geometry import sintsxyp, loop_area, loop_normal
+from .quat import quat
+from .delaunay import triangulation
+from .geometry import sintsxyp, loop_area, loop_normal, slide
 from collections import defaultdict
 
 from .plt import plot, plot_pg, plot_point, plot_edge
@@ -38,8 +40,40 @@ class trimesh:
         else:
             self.faces.append((v1, v2, v3))
 
+    def apy(self, py, e=0.00001, h=None, r=10000):
+        eloop, iloops = py
+        n = loop_normal(eloop)
+        q = quat.toxy(n)
+        q.rot(eloop)
+        for iloop in iloops:
+            q.rot(iloop)
+        t = triangulation(py, e, h, r)
+        q = q.fp()
+        q.rot(t.points)
+        for x, y, z in t.simplices():
+            self.af(x, y, z)
 
 class planargraph:
+
+
+    def merge(self, o):
+        vmap = {}
+        for i, v in enumerate(o.vertices):
+            if v is None:
+                vmap[i] = len(self.vertices)
+                self.vertices.append(None)
+            else:
+                vmap[i] = self.nv(v.cp(), **v.properties)
+        emap = {}
+        for i, e in enumerate(o.edges):
+            if e is None:
+                emap[i] = len(self.edges)
+                self.edges.append(None)
+            else:
+                u, v, properties = e
+                emap[i] = self.ne(vmap[u], vmap[v], **properties)
+        return vmap, emap
+
 
     def __init__(self, segs=None, epsilon=0.00001):
         self.vertices = []
@@ -289,6 +323,49 @@ class planargraph:
         loops = sorted(loops, key=lambda l: abs(loop_area(l)), reverse=True)
         eloop = loops.pop(0)
         return eloop, loops
+
+    def loop_graph(self):
+        """generate a graph where each vertex is associated with a loop,
+        each edge with one or more shared loop edges (i.e. adjacent loops),
+        and each vertex associates with exactly one loop in loops via an index"""
+        pg = planargraph()
+        pg.source = self
+        loops = self.loops()
+        loopps = []
+        for i, loop in enumerate(loops):
+            ps = [self.vertices[j].cp() for j in loop]
+            if loop_normal(ps).z < 0:
+                ps.reverse()
+            loopps.append((i, loop, vec3.com(ps), loop_area(ps)))
+        loopps.sort(key=(lambda v: v[-1]))
+        eloop = loopps.pop(-1)
+        bound = set()
+        for p, q in slide(list(loops[eloop[0]]), 2):
+            bound.add((p, q))
+            bound.add((q, p))
+        loopvs = []
+        for i, loop, com, area in loopps:
+            nv = pg.nv(com, index=i, loops=[loop], area=area, annotation=' ')
+            loopvs.append(nv)
+        for i, u in enumerate(loopvs):
+            uloop = loops[pg.vertices[u].properties['index']]
+            uedges = set()
+            for p, q in slide(list(uloop), 2):
+                uedges.add((p, q))
+                uedges.add((q, p))
+            boundary_edges = uedges.intersection(bound)
+            pg.vertices[u].properties['boundary'] = boundary_edges
+            for j, v in enumerate(loopvs):
+                if not i == j:
+                    vloop = loops[pg.vertices[v].properties['index']]
+                    vedges = set()
+                    for p, q in slide(list(vloop), 2):
+                        vedges.add((p, q))
+                        vedges.add((q, p))
+                    shared = uedges.intersection(vedges)
+                    if shared:
+                        pg.ne(i, j, seam=shared)
+        return pg
 
 
 if __name__ == '__main__':
