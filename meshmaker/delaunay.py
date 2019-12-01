@@ -1,12 +1,7 @@
-#from dilap.geometry import vec3, pointset
-#from dilap.geometry.tools import orient2d, incircle, circumscribe_tri
-#from dilap.geometry.tools import orient2d, incircle
-#from dilap.geometry.polymath import sintsxy, sintsxyp, tinbxy, circumscribe_tri
-
 from .plt import plt, plot, plot_loop, plot_point
 from .vec3 import vec3
 from .geometry import orient2d
-from .geometry import sintsxyp, loop_contains_triangle, circumscribe_triangle
+from .geometry import sintsxyp, loop_contains_triangle, circumcircle
 
 import numpy as np
 from tqdm import tqdm
@@ -27,7 +22,7 @@ class triangulation:
             if not ghost is None:
                 u, v, _ = ghost
                 up, vp = self.points[u], self.points[v]
-                if p.onsxy(up, vp, 1):
+                if p.onsxy(up, vp, 1, e):
                     return j
         else:
             return -1
@@ -51,50 +46,46 @@ class triangulation:
             return -1 if ghost is None else -2
         return -1
 
+    def triangletype(self, u, v, w):
+        """return the number of boundary edges for triangle uvw"""
+        x = self.adjacent(v, u)
+        y = self.adjacent(w, v)
+        z = self.adjacent(u, w)
+        return (x, y, z).count(-2)
+
     def locallydelaunay(self, u, v):
         """determine if uv is a delaunay edge"""
         x, y = self.adjacent(u, v), self.adjacent(v, u)
         if not any((x == -1, x == -2, y == -1, y == -2)):
             up, vp = self.points[u], self.points[v]
             xp, yp = self.points[x], self.points[y]
-            #if sintsxy(up, vp, xp, yp, col=0):
             ip = sintsxyp(up, vp, xp, yp, colinear=0)
             if ip:
-                #if incircle(up, vp, xp, yp) > 0:
                 if yp.incircle(up, vp, xp) > 0:
                     return False
-                #if incircle(vp, up, yp, xp) > 0:
                 if xp.incircle(vp, up, yp) > 0:
                     return False
         return True
 
     def plot(self, ax=None, hl=[]):
-        #ax = ax if ax else plot_axes_xy(100)
         plot_loop(ax, self.polygon[0], lw=2, col='m')
         for hole in self.polygon[1]:
             plot_loop(ax, hole, lw=2, col='y')
         for triangle in self.triangles:
             if triangle:
-                #u, v, w = self.points.gps(triangle)
                 u, v, w = tuple(self.points[x].cp() for x in triangle)
-                #cc, cr = circumscribe_tri(u, v, w)
-                #plot_circle_xy(cc, cr, ax, lw=2, col='k')
                 plot_loop(ax, [u, v, w], lw=1, col='g')
         for i in hl:
             triangle = self.triangles[i]
             if triangle:
                 u, v, w = tuple(self.points[x].cp() for x in triangle)
                 plot_loop(ax, [u, v, w], lw=2, col='y')
-        #for ghost in self.ghosts:
-        #    if ghost:
-        #        plot_edges_xy(self.points.gps((ghost[0], ghost[1])), ax, lw=3, col='b')
         for i, p in enumerate(self.points):
             if i > 3:
-                plot_point(ax, p, col='r')
+                plot_point(ax, p, col='r', annotation=f'{i}')
         return ax
 
-    def __init__(self, polygon, epsilon, hmin=2, crad=10000):
-        #self.points = pointset()
+    def __init__(self, polygon, epsilon, hmin=2, crad=10000, constrain=None):
         self.points = []
         self.ntriangles, self.nghosts = 0, 0
         self.triangles, self.ghosts = [], []
@@ -102,24 +93,35 @@ class triangulation:
 
         self.epsilon = epsilon
         self.polygon = polygon
-        splitpolygon = triangulation.delaunayedges(self.polygon, self.epsilon)
+
+        # this one can be correct but adds triangles...
+        #splitpolygon = triangulation.delaunayedges(self.polygon, self.epsilon)
+
         if hmin:
-            hmin, splitpolygon = triangulation.chewfirstedges(
-                             splitpolygon, self.epsilon, hmin)
+            polygon = triangulation.delaunayedges(polygon, epsilon)
+            hmin, polygon = triangulation.chewfirstedges(polygon, epsilon, hmin)
+
         self.hmin = hmin
-        self.splitpolygon = splitpolygon
         self.coverradius = crad
 
-        self.cover = self.initialize(self.splitpolygon[0], self.epsilon)
+        self.cover = self.initialize(polygon[0], self.epsilon)
         self.edges = []
-        self.edges.extend(self.insertloop(self.splitpolygon[0], self.epsilon))
-        for hole in self.splitpolygon[1]:
+        self.edges.extend(self.insertloop(polygon[0], self.epsilon))
+        for hole in polygon[1]:
             self.edges.extend(self.insertloop(hole, self.epsilon))
-        self.prune(self.splitpolygon[0], self.splitpolygon[1], self.edges, self.epsilon)
-        self.delaunay()
+
+        #self.constrain()
+        if constrain:
+            constrain(self)
+
+        self.prune(polygon[0], polygon[1], self.edges, self.epsilon)
+
+        #self.delaunay() # dont do this when using constrain?
         if self.hmin:
+            self.delaunay() # probably required here?
             print('refine with hmin: %0.3f' % self.hmin)
             self.refine(self.hmin, self.epsilon)
+
         # smooth laplacian
 
     @staticmethod
@@ -134,19 +136,10 @@ class triangulation:
                 w = u.lerp(v, 0.5)
                 r = u.d(w)
                 for p in points:
-                    #print(u.d(p), v.d(p))
                     if not (u.d(p) < e or v.d(p) < e):
                         if w.d(p) < r:
                             loop.insert(j, w)
                             points.append(w)
-
-                            #print(loop)
-                            #print('-' * 50)
-                            #f, ax = plot()
-                            #plot_loop(ax, loop, lw=1, mk='o')
-                            #plot_loop(ax, w.ring(r, 16))
-                            #plt.show()
-
                             return True
 
         def handleloop(loop):
@@ -229,7 +222,10 @@ class triangulation:
         npoints = len(loop)
         edges = [(loop[j - 1], loop[j]) for j in range(npoints)]
         #loop = sorted(loop)
-        for j in tqdm(range(npoints), total=npoints):
+        js = range(npoints)
+        if npoints > 100:
+            js = tqdm(js, total=npoints)
+        for j in js:
             self.insertpoint(loop[j], e)
         return edges
 
@@ -241,26 +237,17 @@ class triangulation:
             nv = self._ap(p)
             g = self.onboundary(nv, e)
             if g == -1:
-                for j, t in enumerate(self.triangles):
-                    if t:
-                        u, v, w = tuple(self.points[x] for x in t)
-                        #a, b, c = orient2d(p, u, v), orient2d(p, v, w), orient2d(p, w, u)
-                        #if triangulation.pintxy(p, u, v, w, e):
-                        #if not any((a < 0, b < 0, c < 0)):
-                        #if p.intrixy(u, v, w, e):
-                        if p.inbxy((u, v, w)):
-                            self.insertvertex(nv, *t)
-                            return range(oc, self.ntriangles)
+                for u, v, w in filter(None, self.triangles):
+                    x, y, z = self.points[u], self.points[v], self.points[w]
+                    if p.inbxy((x, y, z), True):
+                        self.insertvertex(nv, u, v, w)
+                        return range(oc, self.ntriangles)
                 else:
-                    for j, g in enumerate(self.ghosts):
-                        if not g is None:
-                            u, v, w = g
-                            #up, vp = self.points.gps((u, v))
-                            up, vp = self.points[u], self.points[v]
-                            if orient2d(up, vp, p) >= 0:
-                                self.insertghostvertex(nv, u, v, w, e)
-                                #raise ValueError
-                                return range(oc, self.ntriangles)
+                    for u, v, w in filter(None, self.ghosts):
+                        x, y = self.points[u], self.points[v]
+                        if p.leftof(x, y) <= 0:
+                            self.insertghostvertex(nv, u, v, w, e)
+                            return range(oc, self.ntriangles)
             else:
                 u, v, _ = self.ghosts[g]
                 self.deleteghost(u, v)
@@ -270,27 +257,29 @@ class triangulation:
                 self.deletetriangle(v, u, w)
                 self.addtriangle(w, nv, u)
                 self.addtriangle(w, v, nv)
-                raise ValueError
+                #raise ValueError
                 return range(oc, self.ntriangles)
+
+            f, ax = plot()
+            self.plot(ax)
+            plot_point(ax, p, mk='*', col='r')
+            ax.set_xlim(0, 30)
+            ax.set_ylim(0, 30)
+
             raise ValueError('failed to locate point!')
         else:
             print(self.points[nv], p, self.points[nv].d(p))
             raise ValueError('point already located!')
 
     def prune(self, boundary, holes, edges, e):
-        '''
-        remove triangles either outside of the boundary or inside one of the holes
-        replace ghost triangles such that the targeted edges are included
-        '''
+        """remove triangles either outside of the boundary or inside one of the
+        holes replace ghost triangles such that the targeted edges are included"""
         extras = []
         for triangle in self.triangles:
             if triangle:
-                #up, vp, wp = self.points.gps(triangle)
                 up, vp, wp = tuple(self.points[x] for x in triangle)
-                #if tinbxy(up, vp, wp, boundary):
                 if loop_contains_triangle(boundary, up, vp, wp):
                     for hole in holes:
-                        #if tinbxy(up, vp, wp, hole):
                         if loop_contains_triangle(hole, up, vp, wp):
                             extras.append(triangle)
                             break
@@ -303,29 +292,23 @@ class triangulation:
                 u, v, _ = g
                 self.deleteghost(u, v)
         for u, v in edges:
-            #u, v = self.points.fps(edge, e)
             u, v = self._fp(u, e=e), self._fp(v, e=e)
             if self.adjacent(u, v) == -1:
+                print('missingghost')
                 self.addghost(u, v)
             if self.adjacent(v, u) == -1:
                 self.addghost(v, u)
+                print('missingghost')
 
     def insertvertex(self, u, v, w, x):
-        '''
-        insert new vertex u which lies inside of triangle vwx
-        '''
-        #up, vp, wp, xp = self.points.gps((u, v, w, x))
-        #up, vp = self.points[u], self.points[v]
-        #wp, xp = self.points[w], self.points[x]
+        """insert new vertex u which lies inside of triangle vwx"""
         self.deletetriangle(v, w, x)
         self.digcavity(u, v, w)
         self.digcavity(u, w, x)
         self.digcavity(u, x, v)
 
     def insertghostvertex(self, u, v, w, x, e):
-        '''
-        insert new ghost vertex u with bordering edge vw
-        '''
+        """insert new ghost vertex u with bordering edge vw"""
         assert(x == -2)
         self.deleteghost(v, w)
         self.addghost(v, u)
@@ -334,9 +317,7 @@ class triangulation:
             self.addtriangle(u, v, w)
 
     def addtriangle(self, u, v, w):
-        '''
-        insert new triangle uvw
-        '''
+        """insert new triangle uvw"""
         self.triangles.append((u, v, w))
         self.trianglelookup[(u, v)] = self.ntriangles
         self.trianglelookup[(v, w)] = self.ntriangles
@@ -344,9 +325,7 @@ class triangulation:
         self.ntriangles += 1
 
     def deletetriangle(self, u, v, w):
-        '''
-        remove triangle uvw
-        '''
+        """remove triangle uvw"""
         which = self.trianglelookup[(u, v)]
         if which is not None:
             self.triangles[which] = None
@@ -355,27 +334,21 @@ class triangulation:
         self.trianglelookup[(w, u)] = None
 
     def addghost(self, u, v):
-        '''
-        insert new ghost triangle adjacent to uv
-        '''
+        """insert new ghost triangle adjacent to uv"""
         self.ghosts.append((u, v, -2))
         self.ghostlookup[(u, v)] = self.nghosts
         self.nghosts += 1
 
     def deleteghost(self, u, v):
-        '''
-        remove ghost triangle adjacent to uv
-        '''
+        """remove ghost triangle adjacent to uv"""
         which = self.ghostlookup[(u, v)]
         if which is not None:
             self.ghosts[which] = None
         self.ghostlookup[(u, v)] = None
 
     def digcavity(self, u, v, w):
-        '''
-        determine if potential new triangle uvw is delaunay
-        u is a new vertex; vw is an existing edge
-        '''
+        """determine if potential new triangle uvw is delaunay
+        u is a new vertex; vw is an existing edge"""
         up, vp, wp = self.points[u], self.points[v], self.points[w]
         x = self.adjacent(w, v)
         if x == -1:
@@ -385,25 +358,6 @@ class triangulation:
             self.addtriangle(u, v, w)
         else:
             xp = self.points[x]
-
-            '''
-            ax = plot_axes_xy(125, (0, 0))
-            ax = self.plot(ax)
-            for j, p in enumerate(self.points.ps):
-                plot_point_xy(p, plot_point_xy_annotate(p, ax, str(j)), col='g', mk='*')
-            plot_polygon_xy((up, vp, wp), ax, col='r', lw=2)
-            plot_point_xy(up, plot_point_xy_annotate(up, ax, 'up    '), col='y', mk='s')
-            plot_point_xy(vp, plot_point_xy_annotate(vp, ax, 'vp    '), col='m', mk='*')
-            plot_point_xy(wp, plot_point_xy_annotate(wp, ax, 'wp    '), col='m', mk='*')
-            plot_point_xy(xp, plot_point_xy_annotate(xp, ax, 'xp    '), col='m', mk='*')
-            cc, cr = circumscribe_tri(up, vp, wp)
-            plot_circle_xy(cc, cr, ax, lw=4, col='r')
-
-            plt.show()
-            print('dug cavity', 'incircle', incircle(up, vp, wp, xp))
-            '''
-
-            #if incircle(up, vp, wp, xp) > 0:
             if xp.incircle(up, vp, wp) > 0:
                 # u, v, w is not delaunay; dig adjacent triangles
                 self.deletetriangle(w, v, x)
@@ -414,10 +368,8 @@ class triangulation:
                 self.addtriangle(u, v, w)
 
     def flipedge(self, u, v):
-        '''
-        flip the edge uv (replace 2 triangles with two different triangles)
-        uv must bound two non-ghost triangles
-        '''
+        """flip the edge uv (replace 2 triangles with two different triangles)
+        uv must bound two non-ghost triangles"""
         x, y = self.adjacent(u, v), self.adjacent(v, u)
         self.deletetriangle(u, v, x)
         self.deletetriangle(v, u, y)
@@ -425,10 +377,27 @@ class triangulation:
         self.addtriangle(y, x, u)
         return (y, v), (v, x), (x, u), (u, y)
 
+    def __constrain(self):
+        """force all input domain edges into the triangulation"""
+        for p, q in self.edges:
+            u = self._fp(p, e=self.epsilon)
+            v = self._fp(q, e=self.epsilon)
+            if self.trianglelookup.get((u, v)) is None:
+                bad = []
+                for x, y, z in filter(None, self.triangles):
+                    a, b, c = self.points[x], self.points[y], self.points[z]
+                    if sintsxyp(p, q, a, b, 0, 0, 0, 1):
+                        bad.append((x, y, z))
+                    elif sintsxyp(p, q, b, c, 0, 0, 0, 1):
+                        bad.append((x, y, z))
+                    elif sintsxyp(p, q, c, a, 0, 0, 0, 1):
+                        bad.append((x, y, z))
+                print('missing edge!', u, v, bad)
+                for t in bad:
+                    print([self.points[i] for i in t])
+
     def delaunay(self):
-        '''
-        ensure triangulation is delaunay via edge flips
-        '''
+        """ensure triangulation is delaunay via edge flips"""
         unfinished = list(self.trianglelookup.keys())
         while unfinished:
             u, v = unfinished.pop(0)
@@ -437,27 +406,15 @@ class triangulation:
                 unfinished.extend(newedges)
 
     def refine(self, h, e):
-        '''
-        perform chew's first refinement algorithm
-        '''
-
-
-        '''
-        print('prerefinement!')
-        ax = plot_axes_xy(10, (-50, 50))
-        self.plot(ax)
-        plt.show()
-        '''
+        """perform chew's first refinement algorithm"""
         cover = tuple(self.points[x] for x in self.cover)
         unfinished = [t for t in self.triangles if t is not None]
         while unfinished:
             t = unfinished.pop(0)
             if not t in self.triangles:
                 continue
-            #u, v, w = self.points.gps(t)
             u, v, w = tuple(self.points[x] for x in t)
-            #tcp, tcr = circumscribe_triangle(u, v, w, e)
-            tcp, tcr = circumscribe_triangle(u, v, w)
+            tcp, tcr = circumcircle(u, v, w)
             if tcr > h:
 
                 #oob = not tcp.inbxy(self.points.gps(self.cover))
@@ -466,7 +423,7 @@ class triangulation:
                 oob = oob or any((tcp.inbxy(h) for h in self.polygon[1]))
                 if oob:
                     print('OOOB', oob)
-                    '''
+                    """
                     print('refinement insertion!', tcr, tcr / h)
                     ax = plot_axes_xy(125, (0, 0))
                     self.plot(ax)
@@ -479,7 +436,7 @@ class triangulation:
                     plt.show()
 
                     break
-                    '''
+                    """
 
                 newtriangles = self.insertpoint(tcp, e)
                 unfinished.extend([self.triangles[j] for j in newtriangles])

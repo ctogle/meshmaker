@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 
 
 def plot(i=1, j=1, figsize=(8, 8)):
-    f, ax = plt.subplots(i, j, figsize=figsize)
+    f, ax = plt.subplots(i, j, figsize=figsize, dpi=100)
     return f, ax
 
 
@@ -15,7 +15,7 @@ def annotate_point(ax, p, annotation):
 
 def plot_point(ax, p, col='k', mk='o', annotation=None):
     ax.plot(p.x, p.y, color=col, marker=mk)
-    if annotation:
+    if annotation is not None:
         ax = annotate_point(ax, p, annotation)
     return ax
 
@@ -48,6 +48,7 @@ def plot_pg(ax, pg, lw=3, ls='-', col='k', mk='o', annotate=True):
             text = v.properties.get('annotation')
             if text is None:
                 text = str(pg.rings[i]) if len(pg.rings[i]) > 2 else ''
+                #text = str(pg.rings[i]) if len(pg.rings[i]) > -1 else ''
             if text:
                 text = '%d\n%s' % (i, text)
                 annotate_point(ax, v, text)
@@ -56,27 +57,3 @@ def plot_pg(ax, pg, lw=3, ls='-', col='k', mk='o', annotate=True):
         if u is not None and v is not None:
             plot_edge(ax, u, v, lw=lw, ls=ls, col=col)
     return ax
-
-
-def __plot_basis(ax, b, p, which=None):
-    l = 1.5
-    major, minor = b.evectors()
-    if (which == 'major' or not which) and major:
-        dp = major.nrm() * l
-        plot_point(ax, p + dp, col='b')
-        plot_edge(ax, p, p + dp, col='b', lw=2)
-    if (which == 'minor' or not which) and minor:
-        dp = minor.nrm() * l
-        plot_point(ax, p + dp, col='g')
-        plot_edge(ax, p, p + dp, col='g', lw=2)
-    plot_point(ax, p, col='r')
-    return ax
-
-
-def __plot_field(ax, f, ps, which=None):
-    for p in ps:
-        t = f.basis(p)
-        plot_basis(ax, t, p, which=which)
-    return ax
-
-

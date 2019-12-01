@@ -16,7 +16,9 @@ def steepness(img):
 
 def normalize(img):
     if img.max() > 0:
-        return (img - img.min()) / img.max()
+        img -= img.min()
+        img /= img.max()
+        return img
     else:
         return img
 
@@ -45,7 +47,7 @@ def perlin(resolution, frequency, octaves, alpha):
         for x in range(resolution):
             z = snoise2(x / frequency, y / frequency, octaves)
             img[y, x] = ((1 + z) / 2) ** alpha
-    for i in range(3):
+    for i in range(1):
         img = cv2.blur(img, (8, 8))
     return img
 

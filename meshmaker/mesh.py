@@ -1,8 +1,9 @@
+import numpy as np
+from collections import defaultdict
 from .vec3 import vec3
 from .quat import quat
 from .delaunay import triangulation
-from .geometry import sintsxyp, loop_area, loop_normal, slide
-from collections import defaultdict
+from .geometry import sintsxyp, loop_area, loop_normal, slide, isnear
 
 from .plt import plot, plot_pg, plot_point, plot_edge
 
@@ -75,6 +76,22 @@ class planargraph:
         return vmap, emap
 
 
+    def cp(self):
+        o = self.__class__()
+        for v in self.vertices:
+            if v is None:
+                o.vertices.append(None)
+            else:
+                o.nv(v.cp(), **v.properties)
+        for e in self.edges:
+            if e is None:
+                o.edges.append(None)
+            else:
+                i, j, e = e
+                o.ne(i, j, **e)
+        return o
+
+
     def __init__(self, segs=None, epsilon=0.00001):
         self.vertices = []
         self.vertex_count = 0
@@ -84,7 +101,14 @@ class planargraph:
         self.edge_lookup = {}
         if segs:
             for u, v in segs:
-                self.ae(u, v, epsilon)
+            #    i, j = self.av(u), self.av(v)
+            #    self.ne(i, j)
+            #self.dedupe()
+                try:
+                    self.ae(u, v, epsilon)
+                except AssertionError:
+                    #print('segment too short')
+                    pass
 
 
     def nv(self, p, **properties):
@@ -103,12 +127,27 @@ class planargraph:
             self.re(i, j)
         del self.rings[i]
 
+    def sv(self, i, alpha):
+        """split vertex - insert new vertex at location of vertex i,
+        attach edge to existing vertex i and reconnect all edges to
+        the left of the plane defined by x-axis signed angle alpha"""
+        plane = vec3(np.cos(alpha), np.sin(alpha), 0)
+        j = self.nv(self.vertices[i].cp())
+        for k in tuple(self.rings[i]):
+            uv = (self.vertices[k] - self.vertices[i]).nrm()
+            if plane.saxy(uv) < np.pi:
+                self.re(i, k)
+                self.ne(k, j)
+        self.ne(i, j)
+        return j
+
     def fv(self, p, e=0.00001):
         """find vertex"""
         for i, v in enumerate(self.vertices):
             #if v.isnear(p, e):
-            if v.dxy(p) < e:
-                return i
+            if v is not None:
+                if v.dxy(p) < e:
+                    return i
 
     def av(self, p, e=0.00001, **properties):
         """add vertex
@@ -121,14 +160,16 @@ class planargraph:
             new_vertex = self.nv(p, **properties)
             for i, j in tuple(self.edge_lookup.keys()):
                 u, v = self.vertices[i], self.vertices[j]
-                if p.insxy(u, v):
+                if p.insxy(u, v, e=e):
                     self.se(i, j, new_vertex)
                     #break
         return new_vertex
 
 
-    def ne(self, i, j, **properties):
+    def ne(self, i, j, allow_loop=False, **properties):
         """new edge"""
+        if i == j and not allow_loop:
+            return
         i, j = (i, j) if (i < j) else (j, i)
         self.rings[i].add(j)
         self.rings[j].add(i)
@@ -141,11 +182,13 @@ class planargraph:
     def re(self, i, j):
         """remove edge"""
         i, j = (i, j) if (i < j) else (j, i)
-        self.edges[self.edge_lookup[(i, j)]] = None
-        del self.edge_lookup[(i, j)]
-        self.rings[i].remove(j)
-        self.rings[j].remove(i)
-        self.edge_count -= 1
+        k = self.edge_lookup.get((i, j))
+        if k is not None:
+            self.edges[k] = None
+            del self.edge_lookup[(i, j)]
+            self.rings[i].remove(j)
+            self.rings[j].remove(i)
+            self.edge_count -= 1
 
     def se(self, i, j, k):
         """split edge"""
@@ -171,14 +214,18 @@ class planargraph:
         i, j = (i, j) if (i < j) else (j, i)
         assert i != j
         if (i, j) in self.edge_lookup:
+            # edge already exists; return its index
             return self.edge_lookup[(i, j)]
         else:
+            # find intersections with existing geometry
             u = self.vertices[i]
             v = self.vertices[j]
+
             # if u, v intersects existing vertex - ae both segs
             for k, w in enumerate(self.vertices):
-                if (not (w.isnear(u, e) or w.isnear(v, e))) and w.insxy(u, v):
-                    return self.ae(i, k, e), self.ae(k, j, e)
+                if w is not None:
+                    if (not (w.isnear(u, e) or w.isnear(v, e))) and w.insxy(u, v, e):
+                        return self.ae(i, k, e), self.ae(k, j, e)
             # 
             ips, ies = [], []
             for n, m in self.edge_lookup:
@@ -187,20 +234,60 @@ class planargraph:
                 if ip:
                     ips.append(ip)
                     ies.append((n, m))
+
             if ips:
-                ips = sorted(ips, key=lambda ip: ip.dot(u.tov(v)))
-                ips = [self.nv(ip) for ip in ips]
+                # add new edges forming path between ips; return indices
+                zipped = zip(ips, ies)
+                zipped = sorted(zipped, key=lambda ip: ip[0].dot(u.tov(v)))
                 new_edges = []
-                for (n, m), ip in zip(ies, ips):
+                for k, (ip, (n, m)) in enumerate(zipped):
+                    ip = self.nv(ip)
                     new_edges.append(self.se(n, m, ip))
+                    ips[k] = ip
                 ips.insert(0, i)
                 ips.append(j)
                 for k in range(1, len(ips)):
                     new_edges.append(self.ne(ips[k - 1], ips[k], **properties))
                 return new_edges
             else:
+                # add new edge; return its index
                 return self.ne(i, j, **properties)
 
+    def dedupe(self):
+        """deduplicate vertices and edges (adds intersections)"""
+        unique = set()
+        for i, p in enumerate(self.vertices):
+            if p is not None:
+                for j in unique:
+                    q = self.vertices[j]
+                    if p.isnear(q):
+                        for k in self.rings[i]:
+                            if not j == k:
+                                self.ne(j, k)
+                        self.rv(i)
+                        break
+                else:
+                    unique.add(i)
+        for i, u in enumerate(self.edges):
+            if u is not None:
+                k, l, _ = u
+                p, q = self.vertices[k], self.vertices[l]
+                for j, v in enumerate(self.edges):
+                    if j >= i:
+                        break
+                    if v is not None:
+                        n, m, _ = v
+                        r, s = self.vertices[n], self.vertices[m]
+                        ips = sintsxyp(p, q, r, s,
+                                       endpoint=False, endpoints=False,
+                                       skew=True, colinear=True)
+                        if isinstance(ips, (tuple, list)):
+                            self.re(k, l)
+                            self.ae(k, l)
+                            self.re(n, m)
+                            self.ae(n, m)
+                        elif isinstance(ips, vec3):
+                            self.av(ips)
 
     def destem(self):
         stems = []
@@ -211,6 +298,17 @@ class planargraph:
             for i in stems:
                 self.rv(i)
             return self.destem()
+
+    def dissolve(self):
+        for i, v in enumerate(self.vertices):
+            if v is not None:
+                if len(self.rings[i]) == 2:
+                    j, k = tuple(self.rings[i])
+                    x, y, z = self.vertices[j], self.vertices[i], self.vertices[k]
+                    ccw = (y - x).crs(z - y).z
+                    if isnear(ccw, 0):
+                        self.rv(i)
+                        self.ae(j, k)
 
     def minlen(self, epsilon=None):
         """"""
@@ -255,9 +353,45 @@ class planargraph:
             min_order = 0
         return min_order
 
+    def tangent(self, i, j):
+        """Return contiguous, colinear edges to edge (i, j)"""
+        i, j = ((j, i) if (j < i) else (i, j))
+        wall = [self.edge_lookup[(i, j)]]
+        a, b = i, j
+        newtip = self.follow_tangential(a, b)
+        while newtip is not None:
+            key = ((b, newtip) if (b < newtip) else (newtip, b))
+            wall.append(self.edge_lookup[key])
+            a = b
+            b = newtip
+            newtip = self.follow_tangential(a, b)
+        # TODO: deduplicate redundant code below
+        a, b = j, i
+        newtip = self.follow_tangential(a, b)
+        while newtip is not None:
+            key = ((b, newtip) if (b < newtip) else (newtip, b))
+            #wall.append(self.edge_lookup[key])
+            wall.insert(0, self.edge_lookup[key])
+            a = b
+            b = newtip
+            newtip = self.follow_tangential(a, b)
+        return wall
+
+    def follow_tangential(self, i, j):
+        """Like `follow` but only moves in a straight line"""
+        u = self.vertices[i]
+        for k in self.rings[j]:
+            if k == i:
+                continue
+            v = self.vertices[j]
+            w = self.vertices[k]
+            a = (v - u).saxy((w - v))
+            if isnear(a, 0.0, 0.001) or isnear(a, 2 * np.pi, 0.001):
+                return k
 
     def follow(self, i, j, z):
         ring = tuple(self.rings[j])
+        assert i in ring, 'must follow an exist edge'
         n_ring = len(ring)
         if n_ring == 1:
             return i
@@ -304,6 +438,8 @@ class planargraph:
                 loop.append(k)
                 i = j
                 j = k
+            if len(loop) > 10000:
+                raise ValueError('bad geometry; failed to loop')
         loop.pop()
         lowest = loop.index(min(loop))
         return tuple(loop[lowest:] + loop[:lowest])

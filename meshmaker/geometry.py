@@ -26,7 +26,7 @@ def inrng(u, v, w):
     return v < u and u < w
 
 
-def orient2d(a, b, c):
+def orient2d(a, b, c, epsilon=0.00001):
     """Signed area of the triangle a - c, b - c
         0 if a, b, and c are colinear
     """
@@ -35,7 +35,7 @@ def orient2d(a, b, c):
     m21 = b.x - c.x
     m22 = b.y - c.y
     det = m11 * m22 - m12 * m21
-    return near(det, 0)
+    return near(det, 0, epsilon=epsilon)
 
 
 
@@ -82,12 +82,15 @@ def sintsxyp(u, v, p, q, endpoint=True, endpoints=True, colinear=True, skew=True
     elif not uvcrspq == 0:
         if skew:
             upcrspq = near(utop.crs(ptoq).z, 0)
-            t0 = upcrsuv / uvcrspq
-            t1 = upcrspq / uvcrspq
+            t0 = near(near(upcrsuv / uvcrspq, 0), 1)
+            t1 = near(near(upcrspq / uvcrspq, 0), 1)
             if ((t0 == 0 or t0 == 1) and (t1 == 0 or t1 == 1)):
+                # should this query endpoint instead?
                 if endpoints:
                     return u + utov * t1
-            elif not endpoint and ((t0 == 0 or t1 == 0) or (t0 == 1 or t1 == 1)):
+            #elif not endpoint and ((t0 == 0 or t1 == 0) or (t0 == 1 or t1 == 1)):
+            elif ((t0 == 0 or t1 == 0) or (t0 == 1 or t1 == 1)):
+                # does/did this always return None?
                 if endpoint:
                     return u + utov * t1
             elif (0 <= t0 and t0 <= 1) and (0 <= t1 and t1 <= 1):
@@ -112,17 +115,41 @@ def bbox(points):
     return a, b
 
 
-def circumscribe_triangle(p1, p2, p3):
-    """given 3 points and a plane, determine the center and radius
-    of the circumcenter found in the plane plane by projecting p1,p2,p3
-    in the plane"""
-    e1, e2 = (p1.xy() - p3.xy()), (p2.xy() - p3.xy())
-    th = e1.ang(e2)
-    cr = p1.dxy(p2) / (2 * np.sin(th))
-    cp = (e2 * e1.mag()) - (e1 * e2.mag())
-    e3 = e1.crs(e2)
-    fp = p3 + cp.crs(e3) * (1 / (e3.dot(e3) * 2.0))
-    return fp, cr
+def graham_scan(points):
+    from .vec3 import vec3
+    """compute convex hull in xy plane for a set of points"""
+    # find the lowest y-coordinate and leftmost point, called P0
+    i = 0
+    for j in range(1, len(points)):
+        if points[j].y <= points[i].y:
+            if (points[j].x < points[i].x) or (points[j].y < points[i].y):
+                i = j
+    p0 = points[i]
+    # sort points by polar angle with P0,
+    # ## if several points have the same polar angle then only keep the farthest
+    x = vec3.X()
+    angle = lambda j: 0 if i == j else x.saxy(points[j] - p0)
+    order = sorted(range(len(points)), key=angle)
+    # pop the last point from the stack if we turn clockwise to reach this point
+    ccw = lambda u, v, w: (v - u).crs(w - v).z
+    stack = []
+    for j in order:
+        while len(stack) > 1 and ccw(stack[-2], stack[-1], points[j]) < 0:
+            stack.pop(-1)
+        stack.append(points[j])
+    return stack
+
+
+def circumcircle(u, v, w):
+    """find the center/radius of circumcircle of triangle uvw"""
+    vu, wv, uw = (u - v), (v - w), (w - u)
+    d = 2 * ((u - v).crs(v - w)).dot((u - v).crs(v - w))
+    a = (v - w).dot(v - w) * (u - v).dot(u - w) / d
+    b = (u - w).dot(u - w) * (v - u).dot(v - w) / d
+    c = (u - v).dot(u - v) * (w - u).dot(w - v) / d
+    o = u * a + v * b + w * c
+    r = (u - o).mag()
+    return o, r
 
 
 def subdivide_triangles(old):
@@ -156,9 +183,10 @@ def loop_normal(loop):
     pn = vec3.O()
     for u, v, w in slide(loop, 3):
         uv, vw = (v - u), (w - v)
-        alpha = uv.ang(vw)
-        if alpha > 0:
-            pn.trn(uv.crs(vw).nrm())
+        #alpha = uv.ang(vw)
+        #if alpha > 0:
+        #    pn.trn(uv.crs(vw).nrm())
+        pn.trn(uv.crs(vw))
     assert not pn.isO(), 'zero vector in loop_normal!'
     return pn.nrm()
 
@@ -197,6 +225,37 @@ def loop_exterior(loops):
             if loop_contains(loops[i], loops[exterior]):
                 exterior = i
     return exterior
+
+
+def loop_offset(loop, r, r0=10000):
+    """loop contract for simple cases"""
+    from .vec3 import vec3
+    Z = vec3.Z()
+    offset = []
+    for x, y, z in slide(loop, 3):
+        #a = (y - x).ang(z - y)
+        a = (y - x).axy(z - y)
+        if isnear(a, 0, epsilon=0.01):
+            p = y + ((z - x).crs(Z).nrm() * -r)
+            offset.append(p)
+        elif isnear(a, np.pi, epsilon=0.01):
+            p = y + ((z - y).crs(Z).nrm() * r)
+            offset.append(p)
+            p = y + ((y - z).crs(Z).nrm() * r)
+            offset.append(p)
+        else:
+            xy = (y - x).nrm()
+            yz = (z - y).nrm()
+            u = xy.crs(Z)
+            v = yz.crs(Z)
+            a = x + (u * -r) + (xy * -r0)
+            b = y + (u * -r) + (xy *  r0)
+            c = y + (v * -r) + (yz * -r0)
+            d = z + (v * -r) + (yz *  r0)
+            p = sintsxyp(a, b, c, d)
+            offset.append(p)
+    offset.insert(0, offset.pop(-1))
+    return offset
 
 
 def loop_contract(loop, r):

@@ -1,4 +1,4 @@
-from .geometry import near, isnear, orient2d
+from .geometry import near, isnear, orient2d, inrng, slide
 import numpy as np
 import math
 
@@ -24,6 +24,18 @@ class vec3:
     @classmethod
     def Z(cls):
         return cls(0, 0, 1)
+
+    @classmethod
+    def nX(cls):
+        return cls(-1, 0, 0)
+
+    @classmethod
+    def nY(cls):
+        return cls(0, -1, 0)
+
+    @classmethod
+    def nZ(cls):
+        return cls(0, 0, -1)
 
     @classmethod
     def com(cls, pts):
@@ -102,6 +114,9 @@ class vec3:
         cosa = min(max(cosa, -1), 1)
         return np.arccos(cosa)
 
+    def axy(self, o):
+        return self.xy().ang(o.xy())
+
     def saxy(self, o):
         a = (np.arctan2(self.x, self.y) - np.arctan2(o.x, o.y))
         return a + 2 * np.pi if a < 0 else a
@@ -125,6 +140,9 @@ class vec3:
             nm = uv.crs(vec3.Z())
             return abs(self.dot(nm) - u.dot(nm))
 
+    def dlxy(self, loop):
+        return min([self.dexy(u, v) for u, v in slide(loop, 2)])
+
     def tov(self, o):
         return o - self
 
@@ -145,6 +163,12 @@ class vec3:
 
     def trn(self, o):
         return self.set(self.x + o.x, self.y + o.y, self.z + o.z)
+    def xtrn(self, dx):
+        return self.set(self.x + dx, self.y, self.z)
+    def ytrn(self, dy):
+        return self.set(self.x, self.y + dy, self.z)
+    def ztrn(self, dz):
+        return self.set(self.x, self.y, self.z + dz)
 
     def crs(self, o):
         return vec3(self.y * o.z - self.z * o.y,
@@ -195,8 +219,11 @@ class vec3:
         ring = self.ring(r, n, inscribe)
         return [(self, ring[i - 1], ring[i]) for i in range(n)]
 
-    def insxy(self, u, v):
-        if isnear(orient2d(self, u, v), 0):
+    def insxy(self, u, v, e=0.00001):
+        return self.onsxy(u, v, ie=False, e=e)
+
+        '''
+        if isnear(orient2d(self, u, v, epsilon=e), 0):
             uv = u.tov(v)
             u_uv = u.dot(uv)
             v_uv = v.dot(uv)
@@ -206,34 +233,17 @@ class vec3:
             return u_uv <= self_uv and self_uv <= v_uv
         else:
             return False
+        '''
 
-        """
-        e = 0.01
-        if gtl.orient2d_c(self, s1, s2) == 0:
-            tn = s1.tov(s2)
-            selfprj, s1prj, s2prj = self.dot(tn), s1.dot(tn), s2.dot(tn)
-            if s2prj < s1prj:
-                s1prj, s2prj = s2prj, s1prj
-            selfprj = gtl.near_c(selfprj, s1prj, e)
-            selfprj = gtl.near_c(selfprj, s2prj, e)
-            if s1prj <= selfprj and selfprj <= s2prj:
-                #if self.isnear(s1) or self.isnear(s2):
-                if (selfprj - s1prj < e) or (s2prj - selfprj < e):
-                    return (1 if ie else 0)
+    def onsxy(self, u, v, ie=False, e=0.00001):
+        perp = self.leftof(u, v, e)
+        if perp == 0:
+            t = (v - u).nrm()
+            a, b, c = u.dot(t), self.dot(t), v.dot(t)
+            return (ie and (a == b or b == c)) or inrng(b, a, c)
+        else:
+            return False
 
-                #if (s1.x != s2.x): # S is not  vertical
-                #if not gtl.isnear_c(s1.x,s2.x,gtl.epsilon_c): # S is not  vertical
-                #    if (s1.x <= self.x and self.x <= s2.x):return 1
-                #    if (s1.x >= self.x and self.x >= s2.x):return 1
-                #else: # S is vertical, so test y  coordinate
-                #    if (s1.y <= self.y and self.y <= s2.y):return 1
-                #    if (s1.y >= self.y and self.y >= s2.y):return 1
-
-        return 0
-        """
-        raise NotImplementedError
-
-    def onsxy(self, u, v, ie=False):
         #e = gtl.epsilon_c
         e = 0.00001
         if orient2d(self, u, v) == 0:
@@ -260,13 +270,24 @@ class vec3:
 
         return False
 
+    def leftof(self, u, v, e=0.00001):
+        """compute dxy to line containing edge uv"""
+        n = vec3.Z().crs(v - u).nrm()
+        return near(self.dot(n) - u.dot(n), 0, e)
+
+        #x = (u.x - self.x) * (v.y - self.y)
+        #y = (v.x - self.x) * (u.y - self.y)
+        #return near(x - y, 0)
+
     def inbxy(self, loop, ie=False):
         wn = 0
         for i in range(len(loop)):
             u, v = loop[i - 1], loop[i]
             if self.onsxy(u, v, ie=True):
                 return 1 if ie else 0
-            isleft = ((u.x - self.x) * (v.y - self.y) - (v.x - self.x) * (u.y - self.y))
+            x = (u.x - self.x) * (v.y - self.y)
+            y = (v.x - self.x) * (u.y - self.y)
+            isleft = near(x - y, 0)
             if u.y <= self.y:
                 if v.y > self.y:
                     if isleft > 0:
