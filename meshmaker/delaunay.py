@@ -275,9 +275,11 @@ class triangulation:
         """remove triangles either outside of the boundary or inside one of the
         holes replace ghost triangles such that the targeted edges are included"""
         extras = []
-        for triangle in self.triangles:
-            if triangle:
-                up, vp, wp = tuple(self.points[x] for x in triangle)
+        for triangle in filter(None, self.triangles):
+            if any((0 in triangle, 1 in triangle, 2 in triangle)):
+                extras.append(triangle)
+            else:
+                up, vp, wp = (self.points[x] for x in triangle)
                 if loop_contains_triangle(boundary, up, vp, wp):
                     for hole in holes:
                         if loop_contains_triangle(hole, up, vp, wp):
@@ -294,11 +296,9 @@ class triangulation:
         for u, v in edges:
             u, v = self._fp(u, e=e), self._fp(v, e=e)
             if self.adjacent(u, v) == -1:
-                print('missingghost')
                 self.addghost(u, v)
             if self.adjacent(v, u) == -1:
                 self.addghost(v, u)
-                print('missingghost')
 
     def insertvertex(self, u, v, w, x):
         """insert new vertex u which lies inside of triangle vwx"""
@@ -318,11 +318,12 @@ class triangulation:
 
     def addtriangle(self, u, v, w):
         """insert new triangle uvw"""
-        self.triangles.append((u, v, w))
-        self.trianglelookup[(u, v)] = self.ntriangles
-        self.trianglelookup[(v, w)] = self.ntriangles
-        self.trianglelookup[(w, u)] = self.ntriangles
-        self.ntriangles += 1
+        if self.trianglelookup.get((u, v)) is None:
+            self.triangles.append((u, v, w))
+            self.trianglelookup[(u, v)] = self.ntriangles
+            self.trianglelookup[(v, w)] = self.ntriangles
+            self.trianglelookup[(w, u)] = self.ntriangles
+            self.ntriangles += 1
 
     def deletetriangle(self, u, v, w):
         """remove triangle uvw"""

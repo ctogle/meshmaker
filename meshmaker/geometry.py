@@ -82,17 +82,22 @@ def sintsxyp(u, v, p, q, endpoint=True, endpoints=True, colinear=True, skew=True
     elif not uvcrspq == 0:
         if skew:
             upcrspq = near(utop.crs(ptoq).z, 0)
-            t0 = near(near(upcrsuv / uvcrspq, 0), 1)
-            t1 = near(near(upcrspq / uvcrspq, 0), 1)
-            if ((t0 == 0 or t0 == 1) and (t1 == 0 or t1 == 1)):
-                # should this query endpoint instead?
-                if endpoints:
+            t0 = upcrsuv / uvcrspq
+            t1 = upcrspq / uvcrspq
+            #t0 = near(near(t0, 0), 1)
+            #t1 = near(near(t1, 0), 1)
+            if u.isnear(p) or u.isnear(q) or v.isnear(p) or v.isnear(q):
+                if endpoint or endpoints:
                     return u + utov * t1
-            #elif not endpoint and ((t0 == 0 or t1 == 0) or (t0 == 1 or t1 == 1)):
-            elif ((t0 == 0 or t1 == 0) or (t0 == 1 or t1 == 1)):
-                # does/did this always return None?
-                if endpoint:
-                    return u + utov * t1
+            #if ((t0 == 0 or t0 == 1) and (t1 == 0 or t1 == 1)):
+            #    # should this query endpoint instead?
+            #    if endpoints:
+            #        return u + utov * t1
+            ##elif not endpoint and ((t0 == 0 or t1 == 0) or (t0 == 1 or t1 == 1)):
+            #elif ((t0 == 0 or t1 == 0) or (t0 == 1 or t1 == 1)):
+            #    # does/did this always return None?
+            #    if endpoint:
+            #        return u + utov * t1
             elif (0 <= t0 and t0 <= 1) and (0 <= t1 and t1 <= 1):
                 return u + utov * t1
 
