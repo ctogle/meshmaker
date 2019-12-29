@@ -28,7 +28,8 @@ def dilate(img, kernal=(8, 8), r=10):
 
 
 def segment_regions(img):
-    clean_border = segmentation.clear_border(img)
+    #clean_border = segmentation.clear_border(img)
+    clean_border = segmentation.morphological_chan_vese(img, 10)
     labeled = label(clean_border)
     regions = regionprops(labeled)
     regions = sorted(regions, key=(lambda r: r.area), reverse=True)

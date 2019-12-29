@@ -1,24 +1,15 @@
 from collections import defaultdict
+from .base import Base
+from .mesh import Trimesh
 
 
-class model:
+class Model(Base):
 
-    counter = 0
+    def __init__(self, meshes=None, **kws):
+        super().__init__(**kws)
+        self.meshes = defaultdict(list) if meshes is None else meshes
 
-    def __new__(cls):
-        name = f'model_{cls.counter}'
-        cls.counter += 1
-        inst = super().__new__(cls)
-        inst.__init__()
-        inst.name = name
-        print('name', inst.name)
-        return inst
-
-    def __init__(self):
-        self.surfaces = defaultdict(list)
-
-    def add(self, surface, material):
-        self.surfaces[material].append(surface)
-        return self
-
-
+    def add(self, material, mesh=None):
+        mesh = Trimesh() if mesh is None else mesh
+        self.meshes[material].append(mesh)
+        return mesh

@@ -15,6 +15,10 @@ class quat:
         self.z = z
 
     @classmethod
+    def O(cls):
+        return cls(1, 0, 0, 0)
+
+    @classmethod
     def av(cls, a, v):
         v = v * (np.sin(a / 2.0) / v.mag())
         return cls(np.cos(a / 2.0), v.x, v.y, v.z)
@@ -43,5 +47,6 @@ class quat:
     def rot(self, ps):
         for p in ps:
             p.rot(self)
+        return ps
 
 

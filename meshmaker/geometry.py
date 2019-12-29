@@ -38,6 +38,12 @@ def orient2d(a, b, c, epsilon=0.00001):
     return near(det, 0, epsilon=epsilon)
 
 
+def lintp(u, v, p, n):
+    """find intersection of line uv and plane p,n"""
+    t = (v - u).nrm()
+    d = (p - u).dot(n) / t.dot(n)
+    return u + t * d
+
 
 def sintsxyp(u, v, p, q, endpoint=True, endpoints=True, colinear=True, skew=True):
     utov, ptoq, utop = u.tov(v), p.tov(q), u.tov(p)
@@ -89,15 +95,6 @@ def sintsxyp(u, v, p, q, endpoint=True, endpoints=True, colinear=True, skew=True
             if u.isnear(p) or u.isnear(q) or v.isnear(p) or v.isnear(q):
                 if endpoint or endpoints:
                     return u + utov * t1
-            #if ((t0 == 0 or t0 == 1) and (t1 == 0 or t1 == 1)):
-            #    # should this query endpoint instead?
-            #    if endpoints:
-            #        return u + utov * t1
-            ##elif not endpoint and ((t0 == 0 or t1 == 0) or (t0 == 1 or t1 == 1)):
-            #elif ((t0 == 0 or t1 == 0) or (t0 == 1 or t1 == 1)):
-            #    # does/did this always return None?
-            #    if endpoint:
-            #        return u + utov * t1
             elif (0 <= t0 and t0 <= 1) and (0 <= t1 and t1 <= 1):
                 return u + utov * t1
 
@@ -127,7 +124,8 @@ def graham_scan(points):
     i = 0
     for j in range(1, len(points)):
         if points[j].y <= points[i].y:
-            if (points[j].x < points[i].x) or (points[j].y < points[i].y):
+            #if (points[j].x < points[i].x) or (points[j].y < points[i].y):
+            if (points[j].x <= points[i].x) or (points[j].y <= points[i].y):
                 i = j
     p0 = points[i]
     # sort points by polar angle with P0,
@@ -168,11 +166,17 @@ def subdivide_triangles(old):
     return new
 
 
-def slide(loop, n=1):
+def slide(loop, n=1, m=0):
     queue = loop[:] + loop[:n]
-    while len(queue) > n:
+    while len(queue) > n + m:
         yield queue[:n]
         queue.pop(0)
+
+
+def batch(iterable, n=1):
+    l = len(iterable)
+    for ndx in range(0, l, n):
+        yield iterable[ndx:min(ndx + n, l)]
 
 
 def loop_area(loop):
@@ -232,9 +236,15 @@ def loop_exterior(loops):
     return exterior
 
 
-def loop_offset(loop, r, r0=10000):
+def loop_offset(loop, r, closed=True, r0=10000):
     """loop contract for simple cases"""
     from .vec3 import vec3
+    from .quat import quat
+
+    n = loop_normal(loop)
+    q = quat.toxy(n)
+    q.rot(loop)
+
     Z = vec3.Z()
     offset = []
     for x, y, z in slide(loop, 3):
@@ -260,6 +270,15 @@ def loop_offset(loop, r, r0=10000):
             p = sintsxyp(a, b, c, d)
             offset.append(p)
     offset.insert(0, offset.pop(-1))
+
+    if not closed:
+        offset[ 0] = loop[ 0] + Z.crs(loop[ 1] - loop[ 0]).nrm() * r
+        offset[-1] = loop[-1] + Z.crs(loop[-1] - loop[-2]).nrm() * r
+
+    q = q.fp()
+    q.rot(offset)
+    q.rot(loop)
+
     return offset
 
 
@@ -343,29 +362,4 @@ def loop_smooth(loop, weight=0.1, iterations=1):
         loop = [(p + dp) for p, dp in zip(loop, dps)]
     return loop
 
-
-if __name__ == '__main__':
-    from .vec3 import vec3
-
-    (u, v, q, p) =\
-        (vec3(0.0000, 2.0000, 0.0000),
-         vec3(0.4337, 2.9011, 0.0000),
-         vec3(-0.4337, 1.9011, 0.0000),
-         vec3(0.0000, 1.0000, 0.0000))
-    print(u, v, q, p)
-
-    ip = sintsxyp(u, v, q, p, False, False, False, True)
-    print(ip)
-
-    from .plt import plot, plot_pg, plot_point, plot_edge
-    f, ax = plot(figsize=(10, 10))
-    plot_edge(ax, u, v, col='g', lw=5)
-    plot_edge(ax, p, q, col='b', lw=5)
-    plot_point(ax, u, col='g', mk='s', annotation='u')
-    plot_point(ax, v, col='g', mk='s', annotation='v')
-    plot_point(ax, p, col='b', mk='s', annotation='p')
-    plot_point(ax, q, col='b', mk='s', annotation='q')
-    plot_point(ax, ip, col='r', mk='s', annotation='ip')
-    import matplotlib.pyplot as plt
-    plt.show()
 

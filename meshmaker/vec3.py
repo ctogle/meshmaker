@@ -10,32 +10,32 @@ class vec3:
         return cls(0, 0, 0)
 
     @classmethod
-    def U(cls):
-        return cls(1, 1, 1)
+    def U(cls, r=1):
+        return cls(r, r, r)
 
     @classmethod
-    def X(cls):
-        return cls(1, 0, 0)
+    def X(cls, r=1):
+        return cls(r, 0, 0)
 
     @classmethod
-    def Y(cls):
-        return cls(0, 1, 0)
+    def Y(cls, r=1):
+        return cls(0, r, 0)
 
     @classmethod
-    def Z(cls):
-        return cls(0, 0, 1)
+    def Z(cls, r=1):
+        return cls(0, 0, r)
 
     @classmethod
-    def nX(cls):
-        return cls(-1, 0, 0)
+    def nX(cls, r=1):
+        return cls(-r, 0, 0)
 
     @classmethod
-    def nY(cls):
-        return cls(0, -1, 0)
+    def nY(cls, r=1):
+        return cls(0, -r, 0)
 
     @classmethod
-    def nZ(cls):
-        return cls(0, 0, -1)
+    def nZ(cls, r=1):
+        return cls(0, 0, -r)
 
     @classmethod
     def com(cls, pts):
@@ -60,6 +60,13 @@ class vec3:
     def inv(self):
         return vec3(1 / self.x, 1 / self.y, 1 / self.z)
 
+    @classmethod
+    def sum(cls, pts):
+        r = vec3.O()
+        for p in pts:
+            r.trn(p)
+        return r
+
     def __add__(self, o):
         if isinstance(o, vec3):
             return vec3(self.x + o.x, self.y + o.y, self.z + o.z)
@@ -83,12 +90,19 @@ class vec3:
             return self.set(self.x * o.x, self.y * o.y, self.z * o.z)
         else:
             return self.set(self.x * o, self.y * o, self.z * o)
+    def sclps(self, os):
+        for o in os:
+            o.set(self.x * o.x, self.y * o.y, self.z * o.z)
+        return os
 
     def __repr__(self):
         return 'vec3({:.4f}, {:.4f}, {:.4f})'.format(self.x, self.y, self.z)
 
     def __init__(self, x, y, z):
         self.set(x, y, z)
+
+    def setto(self, o):
+        return self.set(o.x, o.y, o.z)
 
     def set(self, x, y, z):
         self.x, self.y, self.z = x, y, z
@@ -169,6 +183,10 @@ class vec3:
         return self.set(self.x, self.y + dy, self.z)
     def ztrn(self, dz):
         return self.set(self.x, self.y, self.z + dz)
+    def trnps(self, os):
+        for o in os:
+            o.set(self.x + o.x, self.y + o.y, self.z + o.z)
+        return os
 
     def crs(self, o):
         return vec3(self.y * o.z - self.z * o.y,
@@ -214,6 +232,37 @@ class vec3:
             t = (i + 1) / (n + 1)
             line.append(self.lerp(o, t))
         return line
+
+    def spline(self, o, st, ot, n, alpha=0.5):
+        n += 1
+        ps = [self, self + st, o + ot, o]
+        x, y, z = zip(*[(p.x, p.y, p.z) for p in ps])
+        t = np.cumsum([0] + [u.d(v) ** alpha for u, v in slide(ps, 2, 1)])
+        x = self.catmull(x, t, n)[1:-1]
+        y = self.catmull(y, t, n)[1:-1]
+        z = self.catmull(z, t, n)[1:-1]
+        return [vec3(x, y, z) for x, y, z in zip(x, y, z)]
+
+    def catmull(self, xs, t, n):
+
+        def coordinate(xs, t, k):
+            l01 = xs[0]*(t[1] - k)/(t[1] - t[0]) + xs[1]*(k - t[0])/(t[1] - t[0])
+            l12 = xs[1]*(t[2] - k)/(t[2] - t[1]) + xs[2]*(k - t[1])/(t[2] - t[1])
+            l23 = xs[2]*(t[3] - k)/(t[3] - t[2]) + xs[3]*(k - t[2])/(t[3] - t[2])
+            l012 = l01*(t[2] - k)/(t[2] - t[0]) + l12*(k - t[0])/(t[2] - t[0])
+            l123 = l12*(t[3] - k)/(t[3] - t[1]) + l23*(k - t[1])/(t[3] - t[1])
+            c12 = l012*(t[2] - k)/(t[2] - t[1]) + l123*(k - t[1])/(t[2] - t[1])
+            return c12
+
+        curve = [xs[0]]
+        for i in range(1, len(xs) - 2):
+            for j in range(n):
+                k = t[1] + (j / n) * (t[2] - t[1])
+                x = coordinate(xs[i - 1:i + 3], t[i - 1:i + 3], k)
+                curve.append(x)
+        curve.append(xs[-2])
+        curve.append(xs[-1])
+        return curve
 
     def fan(self, r, n, inscribe=True):
         ring = self.ring(r, n, inscribe)

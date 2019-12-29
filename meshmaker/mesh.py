@@ -1,18 +1,52 @@
 import numpy as np
 from collections import defaultdict
+from .base import Base
 from .vec3 import vec3
 from .quat import quat
+
 from .delaunay import triangulation
 from .geometry import sintsxyp, loop_area, loop_normal, slide, isnear
 
 from .plt import plot, plot_pg, plot_point, plot_edge
 
 
-class trimesh:
+class Trimesh(Base):
 
-    def __init__(self):
-        self.vertices = []
-        self.faces = []
+    def __init__(self, vertices=None, faces=None, **kws):
+        super().__init__(**kws)
+        self.vertices = [] if vertices is None else vertices
+        self.faces = [] if faces is None else faces
+
+        self.e2f = {}
+
+    def T2F_N3F_V3F(self, tf):
+        data = np.zeros((len(self.faces) * 3 * 8, ))
+        for t, (i, j, k) in enumerate(self.faces):
+            p1, n1, u1 = self.vertices[i]
+            p2, n2, u2 = self.vertices[j]
+            p3, n3, u3 = self.vertices[k]
+            t *= 3 * 8
+            p1, p2, p3, n1, n2, n3 = tf.transform((p1, p2, p3, n1, n2, n3))
+            values = (
+                u1.x, u1.y, n1.x, n1.y, n1.z, p1.x, p1.y, p1.z,
+                u2.x, u2.y, n2.x, n2.y, n2.z, p2.x, p2.y, p2.z,
+                u3.x, u3.y, n3.x, n3.y, n3.z, p3.x, p3.y, p3.z,
+            )
+            for s, v in enumerate(values):
+                data[t + s] = v
+        return data
+
+    def atri(self, u, v, w):
+        tri = len(self.faces)
+        self.e2f[(u, v)] = tri
+        self.e2f[(v, w)] = tri
+        self.e2f[(w, u)] = tri
+        self.faces.append((u, v, w))
+        return tri
+
+    def av(self, v):
+        self.vertices.append(v)
+        return len(self.vertices) - 1
 
     def __iter__(self):
         for i, j, k in (f for f in self.faces if f):
@@ -21,25 +55,25 @@ class trimesh:
             w = self.vertices[k][0]
             yield u, v, w
 
-    def av(self, v):
-        self.vertices.append(v)
-        return len(self.vertices) - 1
-
-    def af(self, p1, p2, p3, p4=None):
+    def af(self, p1, p2, p3, p4=None,
+           u1=None, u2=None, u3=None, u4=None):
         nm = (p1.tov(p2)).crs(p1.tov(p3)).nrm()
-        u1 = vec3(0, 0, 0)
-        u2 = vec3(1, 0, 0)
-        u3 = vec3(1, 1, 0)
+        u1 = vec3(0, 0, 0) if u1 is None else u1
+        u2 = vec3(1, 0, 0) if u2 is None else u2
+        u3 = vec3(1, 1, 0) if u3 is None else u3
         v1 = self.av((p1, nm.cp(), u1))
         v2 = self.av((p2, nm.cp(), u2))
         v3 = self.av((p3, nm.cp(), u3))
         if p4:
-            u4 = vec3(0, 1, 0)
+            u4 = vec3(0, 1, 0) if u4 is None else u4
             v4 = self.av((p4, nm.cp(), u4))
-            self.faces.append((v1, v2, v3))
-            self.faces.append((v1, v3, v4))
+            self.atri(v1, v2, v3)
+            self.atri(v1, v3, v4)
+            #self.faces.append((v1, v2, v3))
+            #self.faces.append((v1, v3, v4))
         else:
-            self.faces.append((v1, v2, v3))
+            self.atri(v1, v2, v3)
+            #self.faces.append((v1, v2, v3))
 
     def apy(self, py, e=0.00001, h=None, r=10000):
         eloop, iloops = py
@@ -53,6 +87,9 @@ class trimesh:
         q.rot(t.points)
         for x, y, z in t.simplices():
             self.af(x, y, z)
+
+
+
 
 class planargraph:
 
@@ -149,7 +186,7 @@ class planargraph:
                 if v.dxy(p) < e:
                     return i
 
-    def av(self, p, e=0.00001, **properties):
+    def av(self, p, e=0.00001, edge_check=True, **properties):
         """add vertex
 
         if p is near an existing vertex, return that vertex
@@ -158,11 +195,12 @@ class planargraph:
         new_vertex = self.fv(p, e) if e > 0 else None
         if new_vertex is None:
             new_vertex = self.nv(p, **properties)
-            for i, j in tuple(self.edge_lookup.keys()):
-                u, v = self.vertices[i], self.vertices[j]
-                if p.insxy(u, v, e=e):
-                    self.se(i, j, new_vertex)
-                    #break
+            if edge_check:
+                for i, j in tuple(self.edge_lookup.keys()):
+                    u, v = self.vertices[i], self.vertices[j]
+                    if p.insxy(u, v, e=e):
+                        self.se(i, j, new_vertex)
+                        #break
         return new_vertex
 
 
