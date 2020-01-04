@@ -1,10 +1,48 @@
 from .base import Base
 from .vec3 import vec3
 from .quat import quat
+from .mat44 import mat44
 import numpy as np
 
 
 class TForm(Base):
+
+    def world(self):
+        if self.parent is None:
+            base = mat44.I()
+        else:
+            base = self.parent.world()
+        return base * self.transformation
+
+    def transform(self, vs):
+        w = self.world()
+        if isinstance(vs, (list, tuple)):
+            return [w * v for v in vs]
+        else:
+            return w * vs
+
+    def __init__(self, t=None, q=None, s=None,
+                 parent=None, children=None, **kws):
+        super().__init__(**kws)
+        self.transformation = mat44.tform(t, q, s)
+
+        self.parent = parent
+        if parent:
+            parent.add(self)
+        self.children = []
+        if children is not None:
+            for child in children:
+                self.add(child)
+
+    def add(self, child):
+        child.parent = self
+        if not child in self.children:
+            self.children.append(child)
+
+
+
+
+class ___TForm(Base):
 
     def __repr__(self):
         return f'tform:\n {self.position}\n {self.rotation}\n {self.scale}'
@@ -13,20 +51,33 @@ class TForm(Base):
                  position=None, rotation=None, scale=None,
                  children=None, parent=None, **kws):
         super().__init__(**kws)
-        self.position = vec3.O() if position is None else position
-        self.rotation = quat.O() if rotation is None else rotation
-        self.scale = vec3.U() if scale is None else scale
-        self.children = [] if children is None else children
+        self.position = position
+        self.rotation = rotation
+        self.scale = scale
+        #self.position = vec3.O() if position is None else position
+        #self.rotation = quat.O() if rotation is None else rotation
+        #self.scale = vec3.U() if scale is None else scale
+        self.children = []
+        if children is not None:
+            for child in children:
+                self.add(child)
         self.parent = parent
         if parent is not None:
-            parent.children.append(self)
+            parent.add(self)
 
     def add(self, child):
         child.parent = self
         self.children.append(child)
 
     def _transform(self, world):
-        local = (world * self.scale).rot(self.rotation) + self.position
+        local = world.cp()
+        if self.scale:
+            local.scl(self.scale)
+        if self.rotation:
+            local.rot(self.rotation)
+        if self.position:
+            local.trn(self.position)
+        #local = (world * self.scale).rot(self.rotation) + self.position
         if self.parent is None:
             return local
         else:

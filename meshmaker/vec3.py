@@ -161,18 +161,15 @@ class vec3:
         return o - self
 
     def rot(self, q):
-        x = self.dot(vec3(
-            q.w ** 2 + q.x ** 2 - q.y ** 2 - q.z ** 2,
-            2 * (q.x * q.y - q.w * q.z),
-            2 * (q.x * q.z + q.w * q.y)))
-        y = self.dot(vec3(
-            2 * (q.x * q.y + q.w * q.z),
-            q.w ** 2 - q.x ** 2 + q.y ** 2 - q.z ** 2,
-            2 * (q.y * q.z - q.w * q.x)))
-        z = self.dot(vec3(
-            2 * (q.x * q.z - q.w * q.y),
-            2 * (q.y * q.z + q.w * q.x),
-            q.w ** 2 - q.x ** 2 - q.y ** 2 + q.z ** 2))
+        x = self.x * (q.w ** 2 + q.x ** 2 - q.y ** 2 - q.z ** 2) +\
+            self.y * (2 * (q.x * q.y - q.w * q.z)) +\
+            self.z * (2 * (q.x * q.z + q.w * q.y))
+        y = self.x * (2 * (q.x * q.y + q.w * q.z)) +\
+            self.y * (q.w ** 2 - q.x ** 2 + q.y ** 2 - q.z ** 2) +\
+            self.z * (2 * (q.y * q.z - q.w * q.x))
+        z = self.x * (2 * (q.x * q.z - q.w * q.y)) +\
+            self.y * (2 * (q.y * q.z + q.w * q.x)) +\
+            self.z * (q.w ** 2 - q.x ** 2 - q.y ** 2 + q.z ** 2)
         return self.set(x, y, z)
 
     def trn(self, o):
@@ -324,10 +321,6 @@ class vec3:
         n = vec3.Z().crs(v - u).nrm()
         return near(self.dot(n) - u.dot(n), 0, e)
 
-        #x = (u.x - self.x) * (v.y - self.y)
-        #y = (v.x - self.x) * (u.y - self.y)
-        #return near(x - y, 0)
-
     def inbxy(self, loop, ie=False):
         wn = 0
         for i in range(len(loop)):
@@ -366,27 +359,4 @@ class vec3:
         det2 = m12 * (m21 * m33 - m23 * m31)
         det3 = m13 * (m21 * m32 - m22 * m31)
         return near(det1 - det2 + det3, 0)
-
-    def __orient2d(self, a, b):
-        """Signed area of the triangle a - self, b - self
-            0 if a, b, and self are colinear
-        """
-        m11 = a.x - self.x
-        m12 = a.y - self.y
-        m21 = b.x - self.x
-        m22 = b.y - self.y
-        det = m11 * m22 - m12 * m21
-        return near(det, 0)
-
-
-if __name__ == '__main__':
-    def show(u, v):
-        a = u.saxy(v)
-        print(u, v, (180 / np.pi) * a)
-    show(vec3(-1, 0, 0), vec3(1, 1, 0))
-    show(vec3(1, 1, 0), vec3(-1, 0, 0))
-    show(vec3( 1, 0, 0), vec3(1, 1, 0))
-    show(vec3( 1, 0, 0), vec3(1, 0, 0))
-    show(vec3( 1, -1, 0), vec3(-1, 1, 0))
-
 

@@ -179,6 +179,12 @@ def batch(iterable, n=1):
         yield iterable[ndx:min(ndx + n, l)]
 
 
+def loopO(loop):
+    """Return a lexicographical loop origin index."""
+    zs = [p.z for p in loop]
+    return zs.index(min(zs))
+
+
 def loop_area(loop):
     area = 0.0
     for i in range(len(loop)):
