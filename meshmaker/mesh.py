@@ -1,81 +1,229 @@
-import numpy as np
 from collections import defaultdict
-from .base import Base
+from .base import Base, Laziness
 from .vec3 import vec3
 from .quat import quat
-
+from .geometry import isnear, slide, batch, loop_normal
 from .delaunay import triangulation
-from .geometry import sintsxyp, loop_area, loop_normal, slide, isnear
-
-from .plt import plot, plot_pg, plot_point, plot_edge
 
 
-class Trimesh(Base):
+class MeshAttribute(Laziness):
+    """Lazy lookup of mesh related data"""
 
-    def __init__(self, vertices=None, faces=None, **kws):
-        super().__init__(**kws)
-        self.vertices = [] if vertices is None else vertices
-        self.faces = [] if faces is None else faces
+    def method(self, mesh):
+        raise NotImplementedError
 
+    def __init__(self, mesh, **kws):
+        super().__init__(self.method(mesh), **kws)
+
+
+class FaceNormals(MeshAttribute):
+    """Lazy lookup of face normals"""
+
+    @staticmethod
+    def method(mesh):
+        def wrapped(f):
+            vs = [mesh.vertices[v] for v in mesh.faces[f]]
+            u, v, w = vs[0], vs[1], vs[2]
+            N = (v - u).crs(w - u).nrm()
+            return N
+        return wrapped
+
+
+class FaceTangents(MeshAttribute):
+    """Lazy lookup of face tangents"""
+
+    @staticmethod
+    def method(mesh):
+        def wrapped(f):
+            N = mesh.face_normals()[f]
+            T = vec3.X() if isnear(abs(N.z), 1) else N.crs(vec3.Z()).nrm()
+            return T
+        return wrapped
+
+
+class Mesh(Base):
+    """2-manifold tri/quad mesh object"""
+
+    def T2F_N3F_V3F(self, tf, smooth=False):
+        """Compute a T2F_N3F_V3F representation for rendering"""
+        #self.dissolve()
+        normals = self.vertex_normals(smooth=smooth)
+        uvs = self.vertex_uvs()
+        wireframe = []
+        data = []
+        for f, face in self:
+            ps, ns, us = [self.vertices[v] for v in face], normals[f], uvs[f][:]
+            ps, ns = tf.transform(ps), tf.transform(ns)
+            if len(ps) == 3:
+                pass
+            elif len(ps) == 4:
+                ps.insert(3, ps[2]);ps.insert(3, ps[0])
+                ns.insert(3, ns[2]);ns.insert(3, ns[0])
+                us.insert(3, us[2]);us.insert(3, us[0])
+                pass
+            else:
+                raise NotImplementedError
+            for p, n, u in zip(ps, ns, us):
+                data.extend([u.x, u.y, n.x, n.y, n.z, p.x, p.y, p.z])
+            for u, v, w in batch(ps, 3):
+                wireframe.append([[u.x, u.y, u.z], [v.x, v.y, v.z], [w.x, w.y, w.z], [u.x, u.y, u.z]])
+                #wireframe.extend([(u, v), (v, w), (w, u)])
+        return data, wireframe
+
+    @classmethod
+    def cube_mesh(cls, r=1):
+        """Generate a generate cube mesh instance"""
+        mesh = cls()
+        bottom = [vec3(-r,-r,-r), vec3( r,-r,-r), vec3( r, r,-r), vec3(-r, r,-r)]
+        top    = [vec3(-r,-r, r), vec3( r,-r, r), vec3( r, r, r), vec3(-r, r, r)]
+        mesh.bridge(bottom, top, meta='side')
+        mesh.af(top, meta='top')
+        mesh.af(bottom[::-1], meta='bottom')
+        return mesh
+
+    def __init__(self):
+        self.vertices = []
+        self.faces = []
         self.e2f = {}
-
-    def T2F_N3F_V3F(self, tf):
-        data = np.zeros((len(self.faces) * 3 * 8, ))
-        for t, (i, j, k) in enumerate(self.faces):
-            p1, n1, u1 = self.vertices[i]
-            p2, n2, u2 = self.vertices[j]
-            p3, n3, u3 = self.vertices[k]
-            t *= 3 * 8
-            p1, p2, p3, n1, n2, n3 = tf.transform((p1, p2, p3, n1, n2, n3))
-            values = (
-                u1.x, u1.y, n1.x, n1.y, n1.z, p1.x, p1.y, p1.z,
-                u2.x, u2.y, n2.x, n2.y, n2.z, p2.x, p2.y, p2.z,
-                u3.x, u3.y, n3.x, n3.y, n3.z, p3.x, p3.y, p3.z,
-            )
-            for s, v in enumerate(values):
-                data[t + s] = v
-        return data
-
-    def atri(self, u, v, w):
-        tri = len(self.faces)
-        self.e2f[(u, v)] = tri
-        self.e2f[(v, w)] = tri
-        self.e2f[(w, u)] = tri
-        self.faces.append((u, v, w))
-        return tri
-
-    def av(self, v):
-        self.vertices.append(v)
-        return len(self.vertices) - 1
+        self.v2f = defaultdict(set)
+        self.meta = {}
 
     def __iter__(self):
-        for i, j, k in (f for f in self.faces if f):
-            u = self.vertices[i][0]
-            v = self.vertices[j][0]
-            w = self.vertices[k][0]
-            yield u, v, w
+        """Yield existing faces and their indices"""
+        for f, face in enumerate(self.faces):
+            if face is not None:
+                yield f, face
 
-    def af(self, p1, p2, p3, p4=None,
-           u1=None, u2=None, u3=None, u4=None):
-        nm = (p1.tov(p2)).crs(p1.tov(p3)).nrm()
-        u1 = vec3(0, 0, 0) if u1 is None else u1
-        u2 = vec3(1, 0, 0) if u2 is None else u2
-        u3 = vec3(1, 1, 0) if u3 is None else u3
-        v1 = self.av((p1, nm.cp(), u1))
-        v2 = self.av((p2, nm.cp(), u2))
-        v3 = self.av((p3, nm.cp(), u3))
-        if p4:
-            u4 = vec3(0, 1, 0) if u4 is None else u4
-            v4 = self.av((p4, nm.cp(), u4))
-            self.atri(v1, v2, v3)
-            self.atri(v1, v3, v4)
-            #self.faces.append((v1, v2, v3))
-            #self.faces.append((v1, v3, v4))
-        else:
-            self.atri(v1, v2, v3)
-            #self.faces.append((v1, v2, v3))
+    def face_normals(self):
+        """Generate face normal vector lookup"""
+        if getattr(self, '_face_normals', None) is None:
+            self._face_normals = FaceNormals(self)
+        return self._face_normals
+
+    def face_tangents(self, normals=None):
+        """Generate face tangent vector lookup"""
+        if getattr(self, '_face_tangents', None) is None:
+            self._face_tangents = FaceTangents(self)
+        return self._face_tangents
+
+    def vertex_normals(self, smooth=False):
+        """Generate vertex normal vector lookup with optional smoothing"""
+        normals = self.normals if getattr(self, 'normals', None) else {}
+        self._face_normals = None
+        face_normals = self.face_normals()
+        for f, face in self:
+            if normals.get(f) is None:
+                if smooth:
+                    ns = [[face_normals[o] for o in self.v2f[v]] for v in face]
+                    ns = [vec3.sum(n).nrm() for n in ns]
+                else:
+                    ns = [face_normals[f]] * len(face)
+                normals[f] = ns
+        return normals
+
+    def vertex_uvs(self):
+        """Generate UV coordinate lookup possibly unwrapping missing faces"""
+        uvs = self.uvs if getattr(self, 'uvs', None) else {}
+        missing = []
+        for f, face in self:
+            if uvs.get(f) is None:
+                missing.append(f)
+        if missing:
+            seams = self.perimeter(missing)
+            while missing:
+                f = missing.pop(0)
+                if uvs.get(f) is None:
+                    self.unwrap_uvs(f, seams=seams, uvs=uvs)
+        return uvs
+
+    def unwrap_uvs(self, f=None, O=None, X=None, Y=None, S=None, seams=None, uvs=None):
+        """Recursively generate UV coordinate lookup via angle based flattening"""
+        if f is None:
+            for f, face in self:
+                return self.unwrap_uvs(f, O, X, Y, S, seams, uvs)
+        face_normals = self.face_normals()
+        N = face_normals[f]
+        O = (vec3.O(), vec3.O()) if O is None else O
+        if X is None and Y is None:
+            X = self.face_tangents()[f]
+            Y = N.crs(X)
+        elif X is None:
+            X = N.crs(Y) # ??? might be flipping convention
+        elif Y is None:
+            Y = N.crs(X) # ??? might be flipping convention
+        S = vec3.U() if S is None else S
+        seams = set() if seams is None else seams
+        uvs = {} if uvs is None else uvs
+        locate = lambda p: vec3(O[1].x + S.x * (O[0].dot(X) - p.dot(X)),
+                                O[1].y + S.y * (O[0].dot(Y) - p.dot(Y)),
+                                O[1].z)
+        uv = list(locate(self.vertices[v]) for v in self.faces[f])
+        uvs[f] = uv
+        for k, (i, j) in enumerate(slide(self.faces[f], 2)):
+            if not (i, j) in seams:
+                adj = self.e2f.get((j, i))
+                if adj is not None and adj not in uvs:
+                    q = quat.uu(N, face_normals[adj])
+                    O = (self.vertices[i], uv[k])
+                    self.unwrap_uvs(adj, O, X.cp().rot(q), Y.cp().rot(q), S, seams, uvs)
+        return uvs
+
+    def dissolve(self):
+        """Merge duplicate vertices"""
+        groups = defaultdict(list)
+        for i, v in enumerate(self.vertices):
+            for j in groups:
+                if self.vertices[j].isnear(v):
+                    groups[i].append(j)
+                    print('dupe!')
+                    break
+            else:
+                groups[i].append(i)
+        raise NotImplementedError(f'{groups}')
+
+    def _fp(self, p, e=0.00001):
+        """Find vertex in neighborhood of p if one exists"""
+        for i, o in enumerate(self.vertices):
+            if p.isnear(o, e):
+                return i
+
+    def av(self, p, e=None):
+        """Add vertex to the mesh without connectivity"""
+
+        e = 0.00001 ###
+
+        v = None if e is None else self._fp(p, e)
+        if v is None:
+            v = len(self.vertices)
+            self.vertices.append(p)
+        return v
+
+    def findfaces(self, meta):
+        """Find all faces with matching meta data"""
+        return [f for f, face in self if (self.meta[f] == meta)]
+
+    def af(self, loop, meta=None, e=0.00001):
+        """Add a face to the mesh via a loop of vertices"""
+        if not isinstance(loop[0], int):
+            loop = [self.av(p, e=e) for p in loop]
+        f = len(self.faces)
+        for i, j in slide(loop, 2):
+            self.v2f[i].add(f)
+            self.e2f[(i, j)] = f
+            self.meta[f] = meta
+        self.faces.append(loop)
+        return f
+
+    def rf(self, f):
+        """Remove face f including its connectivity"""
+        for i, j in slide(self.faces[f], 2):
+            del self.e2f[(i, j)]
+            self.v2f[i].remove(f)
+        self.faces[f] = None
+        del self.meta[f]
 
     def apy(self, py, e=0.00001, h=None, r=10000):
+        """Add triangles covering a polygon, possibly with holes"""
         eloop, iloops = py
         n = loop_normal(eloop)
         q = quat.toxy(n)
@@ -85,485 +233,138 @@ class Trimesh(Base):
         t = triangulation(py, e, h, r)
         q = q.fp()
         q.rot(t.points)
-        for x, y, z in t.simplices():
-            self.af(x, y, z)
+        return [self.af(tri, e=e) for tri in t.simplices()]
 
+    def fan(self, center, rim, e=0.00001):
+        """Add triangles on surface of cone"""
+        new_faces = []
+        for u, v in slide(rim, 2, 0):
+            new_faces.append(self.af(center, u, v, e=e))
+        return new_faces
 
+    def bridge(self, left, right, m=0, e=0.00001, **kws):
+        """Add quadrilaterals between a pair of loops"""
+        assert len(left) == len(right)
+        if not isinstance(left[0], int):
+            left = [self.av(p, e=e) for p in left]
+            right = [self.av(p, e=e) for p in right]
+        new_faces = []
+        for (a, b), (c, d) in zip(slide(left, 2, m), slide(right, 2, m)):
+            new_faces.append(self.af([a, b, d, c], e=e, **kws))
+        return new_faces
 
+    def bridges(self, loops, m=0, n=0, e=0.00001, **kws):
+        """Bridge a sequence of loops"""
+        if not isinstance(loops[0][0], int):
+            loops = [[self.av(p, e=e) for p in loop] for loop in loops]
+        new_patches = []
+        for u, v in slide(loops, 2, m):
+            new_patches.append(self.bridge(u, v, m=n, e=e, **kws))
+        return new_patches
 
-class planargraph:
+    def grid(self, a, b, c, d, n=3, m=3, e=0.00001, **kws):
+        """Create grid patch over quadrilateral region"""
+        rails = [([d] + d.line(c, n - 1) + [c]), ([a] + a.line(b, n - 1) + [b])]
+        lines = [([x] + x.line(y, m - 1) + [y]) for x, y in zip(*rails)]
+        return self.bridges(lines, m=1, n=1, e=e, **kws)
 
+    def extrude(self, faces, offset, meta=None):
+        """Extrude a set of faces along a vector"""
 
-    def merge(self, o):
-        vmap = {}
-        for i, v in enumerate(o.vertices):
-            if v is None:
-                vmap[i] = len(self.vertices)
-                self.vertices.append(None)
-            else:
-                vmap[i] = self.nv(v.cp(), **v.properties)
-        emap = {}
-        for i, e in enumerate(o.edges):
-            if e is None:
-                emap[i] = len(self.edges)
-                self.edges.append(None)
-            else:
-                u, v, properties = e
-                emap[i] = self.ne(vmap[u], vmap[v], **properties)
-        return vmap, emap
+        # the faces induce a set of seams
+        # faces induce cover on 1-1 mappings of modified seams...
+        # extrude each edge of each seam using some local/global strategy
 
+        bottom = self.perimeter(faces)
+        assert len(bottom) == 1, 'cannot extract surfaces with genus > 0'
+        surface = [[self.vertices[v].cp() for v in self.faces[f]] for f in faces]
+        for f in faces:
+            if meta is None:
+                meta = self.meta[f]
+            self.rf(f)
+        patches = [[self.af(offset.trnps(new), meta=meta) for new in surface]]
+        top = self.perimeter(patches[0])
+        patches.append(self.bridge(
+            [i for i, j in bottom[0]],
+            [i for i, j in top[0]], meta=meta))
+        return patches
 
-    def cp(self):
-        o = self.__class__()
-        for v in self.vertices:
-            if v is None:
-                o.vertices.append(None)
-            else:
-                o.nv(v.cp(), **v.properties)
-        for e in self.edges:
-            if e is None:
-                o.edges.append(None)
-            else:
-                i, j, e = e
-                o.ne(i, j, **e)
-        return o
-
-
-    def __init__(self, segs=None, epsilon=0.00001):
-        self.vertices = []
-        self.vertex_count = 0
-        self.rings = defaultdict(set)
-        self.edges = []
-        self.edge_count = 0
-        self.edge_lookup = {}
-        if segs:
-            for u, v in segs:
-            #    i, j = self.av(u), self.av(v)
-            #    self.ne(i, j)
-            #self.dedupe()
-                try:
-                    self.ae(u, v, epsilon)
-                except AssertionError:
-                    #print('segment too short')
-                    pass
-
-
-    def nv(self, p, **properties):
-        """new vertex"""
-        p.properties = properties
-        new_vertex = len(self.vertices)
-        self.vertices.append(p)
-        self.vertex_count += 1
-        return new_vertex
-
-    def rv(self, i):
-        """remove vertex"""
-        self.vertices[i] = None
-        self.vertex_count -= 1
-        for j in self.rings[i].copy():
-            self.re(i, j)
-        del self.rings[i]
-
-    def sv(self, i, alpha):
-        """split vertex - insert new vertex at location of vertex i,
-        attach edge to existing vertex i and reconnect all edges to
-        the left of the plane defined by x-axis signed angle alpha"""
-        plane = vec3(np.cos(alpha), np.sin(alpha), 0)
-        j = self.nv(self.vertices[i].cp())
-        for k in tuple(self.rings[i]):
-            uv = (self.vertices[k] - self.vertices[i]).nrm()
-            if plane.saxy(uv) < np.pi:
-                self.re(i, k)
-                self.ne(k, j)
-        self.ne(i, j)
-        return j
-
-    def fv(self, p, e=0.00001):
-        """find vertex"""
-        for i, v in enumerate(self.vertices):
-            #if v.isnear(p, e):
-            if v is not None:
-                if v.dxy(p) < e:
-                    return i
-
-    def av(self, p, e=0.00001, edge_check=True, **properties):
-        """add vertex
-
-        if p is near an existing vertex, return that vertex
-        if p is near an existing edge, bisect that edge and return new vertex
-        """
-        new_vertex = self.fv(p, e) if e > 0 else None
-        if new_vertex is None:
-            new_vertex = self.nv(p, **properties)
-            if edge_check:
-                for i, j in tuple(self.edge_lookup.keys()):
-                    u, v = self.vertices[i], self.vertices[j]
-                    if p.insxy(u, v, e=e):
-                        self.se(i, j, new_vertex)
-                        #break
-        return new_vertex
-
-
-    def ne(self, i, j, allow_loop=False, **properties):
-        """new edge"""
-        if i == j and not allow_loop:
+    def opposite(self, i, j):
+        """Select the opposing edge"""
+        f = self.e2f.get((i, j))
+        if f is None:
             return
-        i, j = (i, j) if (i < j) else (j, i)
-        self.rings[i].add(j)
-        self.rings[j].add(i)
-        new_edge = len(self.edges)
-        self.edges.append((i, j, properties))
-        self.edge_lookup[(i, j)] = new_edge
-        self.edge_count += 1
-        return new_edge
-
-    def re(self, i, j):
-        """remove edge"""
-        i, j = (i, j) if (i < j) else (j, i)
-        k = self.edge_lookup.get((i, j))
-        if k is not None:
-            self.edges[k] = None
-            del self.edge_lookup[(i, j)]
-            self.rings[i].remove(j)
-            self.rings[j].remove(i)
-            self.edge_count -= 1
-
-    def se(self, i, j, k):
-        """split edge"""
-        i, j = (i, j) if (i < j) else (j, i)
-        _, _, properties = self.edges[self.edge_lookup[(i, j)]]
-        self.re(i, j)
-        u = self.ne(i, k, **properties)
-        v = self.ne(k, j, **properties)
-        return u, v
-
-    def ae(self, i, j, e=0.00001, **properties):
-        """add edge
-
-        if (i, j) is an existing edge, return that edge
-        if (i, j) intersects an existing vertex, add split edges
-        if (i, j) intersects another edge skew and without any endpoints
-            split intersecting edges and 4 new edges
-
-        """
-        assert i != j
-        i = i if isinstance(i, int) else self.av(i, e)
-        j = j if isinstance(j, int) else self.av(j, e)
-        i, j = (i, j) if (i < j) else (j, i)
-        assert i != j
-        if (i, j) in self.edge_lookup:
-            # edge already exists; return its index
-            return self.edge_lookup[(i, j)]
         else:
-            # find intersections with existing geometry
-            u = self.vertices[i]
-            v = self.vertices[j]
+            face = self.faces[f]
+            k = face.index(i) - 2
+            return face[k], face[k + 1]
 
-            # if u, v intersects existing vertex - ae both segs
-            for k, w in enumerate(self.vertices):
-                if w is not None:
-                    if (not (w.isnear(u, e) or w.isnear(v, e))) and w.insxy(u, v, e):
-                        return self.ae(i, k, e), self.ae(k, j, e)
-            # 
-            ips, ies = [], []
-            for n, m in self.edge_lookup:
-                p, q = self.vertices[n], self.vertices[m]
-                ip = sintsxyp(u, v, q, p, False, False, False, True)
-                if ip:
-                    ips.append(ip)
-                    ies.append((n, m))
+    def vertexloop(self, i, j, loop=None):
+        """Select a sequence of vertices without turning"""
+        raise
 
-            if ips:
-                # add new edges forming path between ips; return indices
-                zipped = zip(ips, ies)
-                zipped = sorted(zipped, key=lambda ip: ip[0].dot(u.tov(v)))
-                new_edges = []
-                for k, (ip, (n, m)) in enumerate(zipped):
-                    ip = self.nv(ip)
-                    new_edges.append(self.se(n, m, ip))
-                    ips[k] = ip
-                ips.insert(0, i)
-                ips.append(j)
-                for k in range(1, len(ips)):
-                    new_edges.append(self.ne(ips[k - 1], ips[k], **properties))
-                return new_edges
+    def edgeloop(self, i, j, loop=None):
+        """Select a sequence of face-opposing edges"""
+        if loop and (i, j) == loop[0]:
+            return loop
+        else:
+            if loop is None:
+                loop = []
+            loop.append((i, j))
+            far = self.opposite(j, i)
+            return loop if far is None else self.edgeloop(*far, loop=loop)
+
+    def edgesplit(self, i, j, a=0.5, e=0.00001):
+        """Split the face incident to edge ij"""
+        new_faces = []
+        f = self.e2f.get((i, j))
+        if f is not None:
+            u = self.av(self.vertices[i].lerp(self.vertices[j], a), e=e)
+            face = self.faces[f]
+            meta = self.meta[f]
+            self.rf(f)
+            v = face.index(i) - 2
+            if face[v] == j:
+                new_faces.append(self.af((i, u, face[v + 1]), meta=meta))
+                new_faces.append(self.af((u, j, face[v + 1]), meta=meta))
             else:
-                # add new edge; return its index
-                return self.ne(i, j, **properties)
+                w = face[v + 1]
+                v = face[v]
+                x = self.av(self.vertices[w].lerp(self.vertices[v], a), e=e)
+                new_faces.append(self.af((i, u, x, w), meta=meta))
+                new_faces.append(self.af((u, j, v, x), meta=meta))
+        return new_faces
 
-    def dedupe(self):
-        """deduplicate vertices and edges (adds intersections)"""
-        unique = set()
-        for i, p in enumerate(self.vertices):
-            if p is not None:
-                for j in unique:
-                    q = self.vertices[j]
-                    if p.isnear(q):
-                        for k in self.rings[i]:
-                            if not j == k:
-                                self.ne(j, k)
-                        self.rv(i)
+    def edgeloopsplit(self, i, j, a=0.5, loop=None):
+        """Split the edges incident to each of an edgeloop ij"""
+        split = []
+        for u, v in self.edgeloop(i, j, loop=loop):
+            split.extend(self.edgesplit(u, v, a))
+        return split
+
+    def facesplit(self, f, u, v, e=0.00001):
+        """Break face in two based on intersection with uv"""
+        raise
+
+    def perimeter(self, faces):
+        """Find the set of sequences of edges bounding a set of faces"""
+        edges = []
+        for f in faces:
+            for i, j in slide(self.faces[f], 2):
+                if (j, i) in edges:
+                    edges.remove((j, i))
+                else:
+                    edges.append((i, j))
+        seams = []
+        if edges:
+            seams = [[edges.pop(0)]]
+            while edges:
+                for k, (i, j) in enumerate(edges):
+                    if i == seams[-1][-1][1]:
+                        seams[-1].append((i, j))
+                        edges.pop(k)
                         break
                 else:
-                    unique.add(i)
-        for i, u in enumerate(self.edges):
-            if u is not None:
-                k, l, _ = u
-                p, q = self.vertices[k], self.vertices[l]
-                for j, v in enumerate(self.edges):
-                    if j >= i:
-                        break
-                    if v is not None:
-                        n, m, _ = v
-                        r, s = self.vertices[n], self.vertices[m]
-                        ips = sintsxyp(p, q, r, s,
-                                       endpoint=False, endpoints=False,
-                                       skew=True, colinear=True)
-                        if isinstance(ips, (tuple, list)):
-                            self.re(k, l)
-                            self.ae(k, l)
-                            self.re(n, m)
-                            self.ae(n, m)
-                        elif isinstance(ips, vec3):
-                            self.av(ips)
-
-    def destem(self):
-        stems = []
-        for i in self.rings:
-            if len(self.rings[i]) == 1:
-                stems.append(i)
-        if stems:
-            for i in stems:
-                self.rv(i)
-            return self.destem()
-
-    def dissolve(self):
-        for i, v in enumerate(self.vertices):
-            if v is not None:
-                if len(self.rings[i]) == 2:
-                    j, k = tuple(self.rings[i])
-                    x, y, z = self.vertices[j], self.vertices[i], self.vertices[k]
-                    ccw = (y - x).crs(z - y).z
-                    if isnear(ccw, 0):
-                        self.rv(i)
-                        self.ae(j, k)
-
-    def minlen(self, epsilon=None):
-        """"""
-        lengths = []
-        for i in self.rings:
-            for j in self.rings[i]:
-                l = (self.vertices[j] - self.vertices[i]).mag()
-                lengths.append(l)
-        minlen = min(lengths)
-        if epsilon and minlen < epsilon:
-            raise ValueError(f'bad minlen: {minlen} (epsilon: {epsilon})')
-        return minlen
-
-    def forked(self, i):
-        """"""
-        return not len(self.rings[i]) == 2
-
-    def forkorder(self, i):
-        """compute the topological distance to the nearest vertex of valence > 2"""
-        valence = len(self.rings[i])
-        if valence == 0:
-            min_order = 1
-        elif valence == 1:
-            a, = tuple(self.rings[i])
-            min_order = len(self.loop_until(i, a, 1, self.forked)) - 1
-        elif valence == 2:
-            a, b = tuple(self.rings[i])
-            n_a, n_b = len(self.rings[a]), len(self.rings[b])
-            if (n_a == 1 and n_b == 1) or (n_a > 2 or n_b > 2):
-                min_order = 1
-            elif n_a == 1:
-                min_order = len(self.loop_until(i, b, 1, self.forked)) - 1
-            elif n_b == 1:
-                min_order = len(self.loop_until(i, a, 1, self.forked)) - 1
-            else:
-                a = self.loop_until(i, a, 1, self.forked)
-                b = self.loop_until(i, b, 1, self.forked)
-                a = len(a) - 1 if len(self.rings[a[-1]]) > 1 else 1e10
-                b = len(b) - 1 if len(self.rings[b[-1]]) > 1 else 1e10
-                min_order = min(a, b)
-        else:
-            min_order = 0
-        return min_order
-
-    def tangent(self, i, j):
-        """Return contiguous, colinear edges to edge (i, j)"""
-        i, j = ((j, i) if (j < i) else (i, j))
-        wall = [self.edge_lookup[(i, j)]]
-        a, b = i, j
-        newtip = self.follow_tangential(a, b)
-        while newtip is not None:
-            key = ((b, newtip) if (b < newtip) else (newtip, b))
-            wall.append(self.edge_lookup[key])
-            a = b
-            b = newtip
-            newtip = self.follow_tangential(a, b)
-        # TODO: deduplicate redundant code below
-        a, b = j, i
-        newtip = self.follow_tangential(a, b)
-        while newtip is not None:
-            key = ((b, newtip) if (b < newtip) else (newtip, b))
-            #wall.append(self.edge_lookup[key])
-            wall.insert(0, self.edge_lookup[key])
-            a = b
-            b = newtip
-            newtip = self.follow_tangential(a, b)
-        return wall
-
-    def follow_tangential(self, i, j):
-        """Like `follow` but only moves in a straight line"""
-        u = self.vertices[i]
-        for k in self.rings[j]:
-            if k == i:
-                continue
-            v = self.vertices[j]
-            w = self.vertices[k]
-            a = (v - u).saxy((w - v))
-            if isnear(a, 0.0, 0.001) or isnear(a, 2 * np.pi, 0.001):
-                return k
-
-    def follow(self, i, j, z):
-        ring = tuple(self.rings[j])
-        assert i in ring, 'must follow an exist edge'
-        n_ring = len(ring)
-        if n_ring == 1:
-            return i
-        elif n_ring == 2:
-            u, v = ring
-            return u if v == i else v
-        else:
-            alphas = []
-            u = self.vertices[i]
-            v = self.vertices[j]
-            for k in ring:
-                if not k == i:
-                    w = self.vertices[k]
-                    vu, vw = v.tov(u), v.tov(w)
-                    alphas.append((vu.saxy(vw), k))
-            alphas = sorted(alphas, key=(lambda a: a[0]))
-            return alphas[0 if z > 0 else -1][1]
-
-    def loop_until(self, i_0, j_0, z, f):
-        loop = [i_0, j_0]
-        i, j = i_0, j_0
-        while True:
-            k = self.follow(i, j, z)
-            if f(k):
-                loop.append(k)
-                break
-            elif k == j_0 and j == i_0:
-                break
-            else:
-                loop.append(k)
-                i = j
-                j = k
-        return tuple(loop)
-
-    def loop(self, i_0, j_0, z):
-        # TODO: can this use self.loop_until?
-        loop = [i_0, j_0]
-        i, j = i_0, j_0
-        while True:
-            k = self.follow(i, j, z)
-            if k == j_0 and j == i_0:
-                break
-            else:
-                loop.append(k)
-                i = j
-                j = k
-            if len(loop) > 10000:
-                raise ValueError('bad geometry; failed to loop')
-        loop.pop()
-        lowest = loop.index(min(loop))
-        return tuple(loop[lowest:] + loop[:lowest])
-
-    def loops(self):
-        loops = set()
-        for i, j, properties in filter(lambda e: bool(e), self.edges):
-            loops.add(self.loop(i, j, -1))
-        return list(loops)
-
-    def polygon(self):
-        loops = [[self.vertices[i].cp() for i in l] for l in self.loops()]
-        for loop in loops:
-            if loop_normal(loop).z < 0:
-                loop.reverse()
-            assert (not loop_normal(loop).z < 0)
-        loops = sorted(loops, key=lambda l: abs(loop_area(l)), reverse=True)
-        eloop = loops.pop(0)
-        return eloop, loops
-
-    def loop_graph(self):
-        """generate a graph where each vertex is associated with a loop,
-        each edge with one or more shared loop edges (i.e. adjacent loops),
-        and each vertex associates with exactly one loop in loops via an index"""
-        pg = planargraph()
-        pg.source = self
-        loops = self.loops()
-        loopps = []
-        for i, loop in enumerate(loops):
-            ps = [self.vertices[j].cp() for j in loop]
-            if loop_normal(ps).z < 0:
-                ps.reverse()
-            loopps.append((i, loop, vec3.com(ps), loop_area(ps)))
-        loopps.sort(key=(lambda v: v[-1]))
-        eloop = loopps.pop(-1)
-        bound = set()
-        for p, q in slide(list(loops[eloop[0]]), 2):
-            bound.add((p, q))
-            bound.add((q, p))
-        loopvs = []
-        for i, loop, com, area in loopps:
-            nv = pg.nv(com, index=i, loops=[loop], area=area, annotation=' ')
-            loopvs.append(nv)
-        for i, u in enumerate(loopvs):
-            uloop = loops[pg.vertices[u].properties['index']]
-            uedges = set()
-            for p, q in slide(list(uloop), 2):
-                uedges.add((p, q))
-                uedges.add((q, p))
-            boundary_edges = uedges.intersection(bound)
-            pg.vertices[u].properties['boundary'] = boundary_edges
-            for j, v in enumerate(loopvs):
-                if not i == j:
-                    vloop = loops[pg.vertices[v].properties['index']]
-                    vedges = set()
-                    for p, q in slide(list(vloop), 2):
-                        vedges.add((p, q))
-                        vedges.add((q, p))
-                    shared = uedges.intersection(vedges)
-                    if shared:
-                        pg.ne(i, j, seam=shared)
-        return pg
-
-
-if __name__ == '__main__':
-    pg = planargraph()
-    pg.ae(vec3(-1, 0, 0), vec3(1, 0, 0))
-    pg.ae(vec3(0, -1, 0), vec3(0, 1, 0))
-    print(pg.vertex_count)
-    quit()
-
-    pg = planargraph()
-    pg.ae(vec3(0, 0, 0), vec3(1, 0, 0))
-    pg.ae(vec3(1, 0, 0), vec3(1, 1, 0))
-    pg.ae(vec3(1, 1, 0), vec3(0, 1, 0))
-    pg.ae(vec3(0, 1, 0), vec3(0, 0, 0))
-    pg.ae(vec3(1, 1, 0), vec3(0, 0, 0))
-    pg.ae(vec3(1, 1, 0), vec3(2, 2, 0))
-
-    for l in pg.loops():
-        print('l', l)
-
-    from .plt import plot, plot_pg
-    f, ax = plot()
-    plot_pg(ax, pg)
-    ax.set_title('%d vertices, %d edges' % (pg.vertex_count, pg.edge_count))
-    plt.show()
-
-
+                    edges.pop(k)
+                    seams.append([(i, j)])
+        return seams

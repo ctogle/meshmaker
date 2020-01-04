@@ -1,6 +1,6 @@
 from collections import defaultdict
 from .base import Base
-from .mesh import Trimesh
+from .mesh import Mesh
 
 
 class Model(Base):
@@ -10,6 +10,6 @@ class Model(Base):
         self.meshes = defaultdict(list) if meshes is None else meshes
 
     def add(self, material, mesh=None):
-        mesh = Trimesh() if mesh is None else mesh
+        mesh = Mesh() if mesh is None else mesh
         self.meshes[material].append(mesh)
         return mesh
