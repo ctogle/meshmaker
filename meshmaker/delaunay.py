@@ -71,8 +71,11 @@ class triangulation:
         plot_loop(ax, self.polygon[0], lw=2, col='m')
         for hole in self.polygon[1]:
             plot_loop(ax, hole, lw=2, col='y')
+        cover = set(self.cover)
         for triangle in self.triangles:
             if triangle:
+                if cover.intersection(set(triangle)):
+                    continue
                 u, v, w = tuple(self.points[x].cp() for x in triangle)
                 plot_loop(ax, [u, v, w], lw=1, col='g')
         for i in hl:
@@ -110,9 +113,10 @@ class triangulation:
         for hole in polygon[1]:
             self.edges.extend(self.insertloop(hole, self.epsilon))
 
-        #self.constrain()
         if constrain:
             constrain(self)
+        else:
+            self.constrain()
 
         self.prune(polygon[0], polygon[1], self.edges, self.epsilon)
 
@@ -378,24 +382,35 @@ class triangulation:
         self.addtriangle(y, x, u)
         return (y, v), (v, x), (x, u), (u, y)
 
-    def __constrain(self):
+    def constrain(self):
         """force all input domain edges into the triangulation"""
+        unfin = []
         for p, q in self.edges:
             u = self._fp(p, e=self.epsilon)
             v = self._fp(q, e=self.epsilon)
             if self.trianglelookup.get((u, v)) is None:
+                unfin.append((u, v))
+        while unfin:
+            u, v = unfin.pop(0)
+            if self.trianglelookup.get((u, v)) is None:
+                p, q = self.points[u], self.points[v]
                 bad = []
                 for x, y, z in filter(None, self.triangles):
                     a, b, c = self.points[x], self.points[y], self.points[z]
                     if sintsxyp(p, q, a, b, 0, 0, 0, 1):
-                        bad.append((x, y, z))
+                        bad.append((x, y))
                     elif sintsxyp(p, q, b, c, 0, 0, 0, 1):
-                        bad.append((x, y, z))
+                        bad.append((y, z))
                     elif sintsxyp(p, q, c, a, 0, 0, 0, 1):
-                        bad.append((x, y, z))
-                print('missing edge!', u, v, bad)
-                for t in bad:
-                    print([self.points[i] for i in t])
+                        bad.append((z, x))
+                if len(bad) == 2:
+                    self.flipedge(*bad[0])
+                else:
+                    r = self.points[u].lerp(self.points[v], 0.5)
+                    self.insertpoint(r, e=self.epsilon)
+                    w = self._fp(r, e=self.epsilon)
+                    unfin.append((u, w))
+                    unfin.append((w, v))
 
     def delaunay(self):
         """ensure triangulation is delaunay via edge flips"""

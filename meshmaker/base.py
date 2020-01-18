@@ -15,9 +15,9 @@ class Laziness(Base):
         self._lookup = {}
         self._method = method
 
-    def __getitem__(self, key):
+    def __getitem__(self, key, **kws):
         value = self._lookup.get(key)
         if value is None:
-            value = self._method(key)
+            value = self._method(key, **kws)
             self._lookup[key] = value
         return value

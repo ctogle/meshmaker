@@ -110,10 +110,14 @@ def bbox(points):
                 a.x = p.x
             if p.y < a.y:
                 a.y = p.y
+            if p.z < a.z:
+                a.z = p.z
             if p.x > b.x:
                 b.x = p.x
             if p.y > b.y:
                 b.y = p.y
+            if p.z > b.z:
+                b.z = p.z
     return a, b
 
 
@@ -181,8 +185,20 @@ def batch(iterable, n=1):
 
 def loopO(loop):
     """Return a lexicographical loop origin index."""
-    zs = [p.z for p in loop]
-    return zs.index(min(zs))
+    from .vec3 import vec3
+
+    N = loop_normal(loop)
+    X = vec3.Z().crs(N).nrm()
+    Y = N.crs(X).nrm()
+
+    loop = [vec3(p.dot(X), p.dot(Y), 0) for p in loop]
+
+    sortkey = lambda l: (l[1].z, l[1].x, l[1].y)
+    O = sorted(enumerate(loop), key=sortkey)[0][0]
+    return O
+
+    #zs = [p.z for p in loop]
+    #return zs.index(min(zs))
 
 
 def loop_area(loop):

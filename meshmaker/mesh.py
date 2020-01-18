@@ -4,6 +4,7 @@ from .vec3 import vec3
 from .quat import quat
 from .geometry import isnear, slide, batch, loop_normal
 from .delaunay import triangulation
+import numpy as np
 
 
 class MeshAttribute(Laziness):
@@ -84,6 +85,7 @@ class Mesh(Base):
     def __init__(self):
         self.vertices = []
         self.faces = []
+        self.nface = 0
         self.e2f = {}
         self.v2f = defaultdict(set)
         self.meta = {}
@@ -93,6 +95,15 @@ class Mesh(Base):
         for f, face in enumerate(self.faces):
             if face is not None:
                 yield f, face
+
+    def face_rings(self):
+        f2f = defaultdict(list)
+        for f, face in self:
+            for u, v in slide(face, 2):
+                adj = self.e2f.get((v, u))
+                if adj is not None:
+                    f2f[f].append(adj)
+        return f2f
 
     def face_normals(self):
         """Generate face normal vector lookup"""
@@ -130,6 +141,7 @@ class Mesh(Base):
                 missing.append(f)
         if missing:
             seams = self.perimeter(missing)
+            seams = set([x for y in seams for x in y])
             while missing:
                 f = missing.pop(0)
                 if uvs.get(f) is None:
@@ -137,7 +149,21 @@ class Mesh(Base):
         return uvs
 
     def unwrap_uvs(self, f=None, O=None, X=None, Y=None, S=None, seams=None, uvs=None):
-        """Recursively generate UV coordinate lookup via angle based flattening"""
+        """Recursively generate UV coordinate lookup via angle based flattening
+
+        Args:
+            f (int): Current face index being unwrapped
+            O (tuple): Origin pair (R3, UV)
+            X (vec3): U-basis vector of parameterization
+            Y (vec3): V-basis vector of parameterization
+            S (vec3): Scale vector of parameterization
+            seams (set): Set of directed edges which may not be traversed during unwrapping
+            uvs (dict): Current UV mapping being computing
+
+        Returns:
+            dict mapping face indices to sequences of UV coordinates
+
+        """
         if f is None:
             for f, face in self:
                 return self.unwrap_uvs(f, O, X, Y, S, seams, uvs)
@@ -212,6 +238,7 @@ class Mesh(Base):
             self.e2f[(i, j)] = f
             self.meta[f] = meta
         self.faces.append(loop)
+        self.nface += 1
         return f
 
     def rf(self, f):
@@ -221,6 +248,7 @@ class Mesh(Base):
             self.v2f[i].remove(f)
         self.faces[f] = None
         del self.meta[f]
+        self.nface -= 1
 
     def apy(self, py, e=0.00001, h=None, r=10000):
         """Add triangles covering a polygon, possibly with holes"""
@@ -239,7 +267,7 @@ class Mesh(Base):
         """Add triangles on surface of cone"""
         new_faces = []
         for u, v in slide(rim, 2, 0):
-            new_faces.append(self.af(center, u, v, e=e))
+            new_faces.append(self.af((center, u, v), e=e))
         return new_faces
 
     def bridge(self, left, right, m=0, e=0.00001, **kws):
@@ -287,6 +315,17 @@ class Mesh(Base):
         patches.append(self.bridge(
             [i for i, j in bottom[0]],
             [i for i, j in top[0]], meta=meta))
+        return patches
+
+    def revolve(self, curve, axis, n=4):
+        patches = []
+        back = [p.cp() for p in curve]
+        q = quat.av(np.pi * (2 / n), axis)
+        for i in range(n):
+            front = [p.cp() for p in back]
+            q.rot(front)
+            patches.append(self.bridge(front, back, m=1))
+            back = front
         return patches
 
     def opposite(self, i, j):

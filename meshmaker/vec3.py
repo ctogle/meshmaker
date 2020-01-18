@@ -95,6 +95,9 @@ class vec3:
             o.set(self.x * o.x, self.y * o.y, self.z * o.z)
         return os
 
+    def quant(self, n=4):
+        return vec3(round(self.x, 4), round(self.y, 4), round(self.z, 4))
+
     def __repr__(self):
         return 'vec3({:.4f}, {:.4f}, {:.4f})'.format(self.x, self.y, self.z)
 
@@ -231,7 +234,8 @@ class vec3:
         return line
 
     def spline(self, o, st, ot, n, alpha=0.5):
-        n += 1
+        #n += 1
+        n -= 1
         ps = [self, self + st, o + ot, o]
         x, y, z = zip(*[(p.x, p.y, p.z) for p in ps])
         t = np.cumsum([0] + [u.d(v) ** alpha for u, v in slide(ps, 2, 1)])
@@ -321,11 +325,11 @@ class vec3:
         n = vec3.Z().crs(v - u).nrm()
         return near(self.dot(n) - u.dot(n), 0, e)
 
-    def inbxy(self, loop, ie=False):
+    def inbxy(self, loop, ie=False, e=0.00001):
         wn = 0
         for i in range(len(loop)):
             u, v = loop[i - 1], loop[i]
-            if self.onsxy(u, v, ie=True):
+            if self.onsxy(u, v, ie=True, e=e):
                 return 1 if ie else 0
             x = (u.x - self.x) * (v.y - self.y)
             y = (v.x - self.x) * (u.y - self.y)

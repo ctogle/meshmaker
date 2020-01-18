@@ -29,7 +29,10 @@ class quat:
         if a == 0.0:
             return cls(1, 0, 0, 0)
         else:
-            return cls.av(a, x.crs(y).nrm())
+            v = x.crs(y).nrm()
+            if isnear(v.dot(v), 0):
+                v = vec3.Z()
+            return cls.av(a, v)
 
     @classmethod
     def toxy(cls, v):
@@ -40,6 +43,10 @@ class quat:
             return cls.uu(v, vec3.Z())
         else:
             return cls.av(0, vec3.Z())
+
+    @classmethod
+    def rotz(cls, a):
+        return cls.av(a, vec3.Z())
 
     def fp(self):
         return quat(-self.w, self.x, self.y, self.z)
