@@ -35,8 +35,19 @@ def plot_edges(ax, edges, lw=3, ls='-', col='k', mk=None):
     return ax
 
 
-def plot_loop(ax, loop, lw=3, ls='-', col='k', mk=None):
+def plot_loop(ax, loop, lw=3, ls='-', col='k', mk=None, fill=None):
+    if fill is not None:
+        xs, ys = zip(*[(p.x, p.y) for p in loop])
+        ax.fill(xs, ys, fill)
     return plot_edges(ax, [loop[-1]] + loop, lw, ls, col, mk)
+
+
+def plot_polygon(ax, py, lw=3, ls='-', col='k', mk=None, fill=None):
+    eb, ibs = py
+    ax = plot_loop(ax, eb, lw=lw, ls=ls, col=col, mk=mk, fill=fill)
+    for ib in ibs:
+        ax = plot_loop(ax, ib, lw=lw, ls=ls, col=col, mk=mk, fill='w')
+    return ax
 
 
 def plot_pg(ax, pg, lw=3, ls='-', col='k', mk='o', annotate=True):

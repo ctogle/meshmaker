@@ -10,91 +10,19 @@ from .geometry import sintsxyp, loop_area, loop_normal, slide, isnear
 from .plt import plot, plot_pg, plot_point, plot_edge
 
 
-class Trimesh(Base):
-
-    def __init__(self, vertices=None, faces=None, **kws):
-        super().__init__(**kws)
-        self.vertices = [] if vertices is None else vertices
-        self.faces = [] if faces is None else faces
-
-        self.e2f = {}
-
-    def T2F_N3F_V3F(self, tf):
-        data = np.zeros((len(self.faces) * 3 * 8, ))
-        for t, (i, j, k) in enumerate(self.faces):
-            p1, n1, u1 = self.vertices[i]
-            p2, n2, u2 = self.vertices[j]
-            p3, n3, u3 = self.vertices[k]
-            t *= 3 * 8
-            p1, p2, p3, n1, n2, n3 = tf.transform((p1, p2, p3, n1, n2, n3))
-            values = (
-                u1.x, u1.y, n1.x, n1.y, n1.z, p1.x, p1.y, p1.z,
-                u2.x, u2.y, n2.x, n2.y, n2.z, p2.x, p2.y, p2.z,
-                u3.x, u3.y, n3.x, n3.y, n3.z, p3.x, p3.y, p3.z,
-            )
-            for s, v in enumerate(values):
-                data[t + s] = v
-        return data
-
-    def atri(self, u, v, w):
-        tri = len(self.faces)
-        self.e2f[(u, v)] = tri
-        self.e2f[(v, w)] = tri
-        self.e2f[(w, u)] = tri
-        self.faces.append((u, v, w))
-        return tri
-
-    def av(self, v):
-        self.vertices.append(v)
-        return len(self.vertices) - 1
-
-    def __iter__(self):
-        for i, j, k in (f for f in self.faces if f):
-            u = self.vertices[i][0]
-            v = self.vertices[j][0]
-            w = self.vertices[k][0]
-            yield u, v, w
-
-    def af(self, p1, p2, p3, p4=None,
-           u1=None, u2=None, u3=None, u4=None):
-        nm = (p1.tov(p2)).crs(p1.tov(p3)).nrm()
-        u1 = vec3(0, 0, 0) if u1 is None else u1
-        u2 = vec3(1, 0, 0) if u2 is None else u2
-        u3 = vec3(1, 1, 0) if u3 is None else u3
-        v1 = self.av((p1, nm.cp(), u1))
-        v2 = self.av((p2, nm.cp(), u2))
-        v3 = self.av((p3, nm.cp(), u3))
-        if p4:
-            u4 = vec3(0, 1, 0) if u4 is None else u4
-            v4 = self.av((p4, nm.cp(), u4))
-            self.atri(v1, v2, v3)
-            self.atri(v1, v3, v4)
-            #self.faces.append((v1, v2, v3))
-            #self.faces.append((v1, v3, v4))
-        else:
-            self.atri(v1, v2, v3)
-            #self.faces.append((v1, v2, v3))
-
-    def apy(self, py, e=0.00001, h=None, r=10000):
-        eloop, iloops = py
-        n = loop_normal(eloop)
-        q = quat.toxy(n)
-        q.rot(eloop)
-        for iloop in iloops:
-            q.rot(iloop)
-        t = triangulation(py, e, h, r)
-        q = q.fp()
-        q.rot(t.points)
-        for x, y, z in t.simplices():
-            self.af(x, y, z)
-
-
-
-
 class planargraph:
 
-
     def merge(self, o):
+        """Add geometry of another PlanarGraph
+
+		Args:
+			o (PlanarGraph): Graph to merge with self
+
+		Returns:
+			tuple of two dicts mapping indices of vertices
+			and edges in o to their new indices within self
+
+		"""
         vmap = {}
         for i, v in enumerate(o.vertices):
             if v is None:
@@ -112,8 +40,8 @@ class planargraph:
                 emap[i] = self.ne(vmap[u], vmap[v], **properties)
         return vmap, emap
 
-
     def cp(self):
+        """Make a copy of self"""
         o = self.__class__()
         for v in self.vertices:
             if v is None:
@@ -127,7 +55,6 @@ class planargraph:
                 i, j, e = e
                 o.ne(i, j, **e)
         return o
-
 
     def __init__(self, segs=None, epsilon=0.00001):
         self.vertices = []
@@ -144,9 +71,8 @@ class planargraph:
                 try:
                     self.ae(u, v, epsilon)
                 except AssertionError:
-                    #print('segment too short')
+                    print('bad segment (too short?)')
                     pass
-
 
     def nv(self, p, **properties):
         """new vertex"""
@@ -202,7 +128,6 @@ class planargraph:
                         self.se(i, j, new_vertex)
                         #break
         return new_vertex
-
 
     def ne(self, i, j, allow_loop=False, **properties):
         """new edge"""
@@ -540,30 +465,3 @@ class planargraph:
                     if shared:
                         pg.ne(i, j, seam=shared)
         return pg
-
-
-if __name__ == '__main__':
-    pg = planargraph()
-    pg.ae(vec3(-1, 0, 0), vec3(1, 0, 0))
-    pg.ae(vec3(0, -1, 0), vec3(0, 1, 0))
-    print(pg.vertex_count)
-    quit()
-
-    pg = planargraph()
-    pg.ae(vec3(0, 0, 0), vec3(1, 0, 0))
-    pg.ae(vec3(1, 0, 0), vec3(1, 1, 0))
-    pg.ae(vec3(1, 1, 0), vec3(0, 1, 0))
-    pg.ae(vec3(0, 1, 0), vec3(0, 0, 0))
-    pg.ae(vec3(1, 1, 0), vec3(0, 0, 0))
-    pg.ae(vec3(1, 1, 0), vec3(2, 2, 0))
-
-    for l in pg.loops():
-        print('l', l)
-
-    from .plt import plot, plot_pg
-    f, ax = plot()
-    plot_pg(ax, pg)
-    ax.set_title('%d vertices, %d edges' % (pg.vertex_count, pg.edge_count))
-    plt.show()
-
-

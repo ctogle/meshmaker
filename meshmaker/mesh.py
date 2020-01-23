@@ -2,7 +2,7 @@ from collections import defaultdict
 from .base import Base, Laziness
 from .vec3 import vec3
 from .quat import quat
-from .geometry import isnear, slide, batch, loop_normal
+from .geometry import isnear, near, slide, batch, loop_normal
 from .delaunay import triangulation
 import numpy as np
 
@@ -194,6 +194,23 @@ class Mesh(Base):
                     self.unwrap_uvs(adj, O, X.cp().rot(q), Y.cp().rot(q), S, seams, uvs)
         return uvs
 
+    def angle_seams(self, alpha=(np.pi / 2)):
+        """Find the set of edges joining faces with normals
+        differing in angle by alpha or more radians"""
+        seams = set()
+        fN = self.face_normals()
+        for f, face in self:
+            for i, j in slide(face, 2):
+                #left  = self.e2f.get((i, j))
+                #assert left == f # occurs when topology is imperfect
+                right = self.e2f.get((j, i))
+                if right is None:
+                    seams.add((i, j))
+                else:
+                    if near(fN[f].ang(fN[right]), alpha) >= alpha:
+                        seams.add((i, j))
+        return seams
+
     def dissolve(self):
         """Merge duplicate vertices"""
         groups = defaultdict(list)
@@ -250,7 +267,7 @@ class Mesh(Base):
         del self.meta[f]
         self.nface -= 1
 
-    def apy(self, py, e=0.00001, h=None, r=10000):
+    def apy(self, py, e=0.00001, h=None, r=10000, **kws):
         """Add triangles covering a polygon, possibly with holes"""
         eloop, iloops = py
         n = loop_normal(eloop)
@@ -261,7 +278,7 @@ class Mesh(Base):
         t = triangulation(py, e, h, r)
         q = q.fp()
         q.rot(t.points)
-        return [self.af(tri, e=e) for tri in t.simplices()]
+        return [self.af(tri, e=e, **kws) for tri in t.simplices()]
 
     def fan(self, center, rim, e=0.00001):
         """Add triangles on surface of cone"""
