@@ -15,14 +15,14 @@ class planargraph:
     def merge(self, o):
         """Add geometry of another PlanarGraph
 
-		Args:
-			o (PlanarGraph): Graph to merge with self
+        Args:
+            o (PlanarGraph): Graph to merge with self
 
-		Returns:
-			tuple of two dicts mapping indices of vertices
-			and edges in o to their new indices within self
+        Returns:
+            tuple of two dicts mapping indices of vertices
+            and edges in o to their new indices within self
 
-		"""
+        """
         vmap = {}
         for i, v in enumerate(o.vertices):
             if v is None:
@@ -446,6 +446,7 @@ class planargraph:
         for i, loop, com, area in loopps:
             nv = pg.nv(com, index=i, loops=[loop], area=area, annotation=' ')
             loopvs.append(nv)
+        # find adjacencies
         for i, u in enumerate(loopvs):
             uloop = loops[pg.vertices[u].properties['index']]
             uedges = set()
@@ -464,4 +465,8 @@ class planargraph:
                     shared = uedges.intersection(vedges)
                     if shared:
                         pg.ne(i, j, seam=shared)
+
+                        # if no edges are found, consider containment adjacency
+                        # eloop has been popped -> no shared edges -> must be contained
+
         return pg

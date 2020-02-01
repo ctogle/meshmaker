@@ -43,6 +43,12 @@ class mat44:
                    m31, m32, m33, m34,
                      0,   0,   0,   1)
 
+    def np(self):
+        return np.array([[m11, m12, m13, m14],
+                         [m21, m22, m23, m24],
+                         [m31, m32, m33, m34],
+                         [m41, m42, m43, m44]])
+
     def __repr__(self):
         return f'{self.m11} {self.m12} {self.m13} {self.m14}\
                \n{self.m21} {self.m22} {self.m23} {self.m24}\

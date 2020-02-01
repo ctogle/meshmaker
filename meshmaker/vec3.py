@@ -85,6 +85,11 @@ class vec3:
         else:
             return vec3(self.x * o, self.y * o, self.z * o)
 
+    def __iter__(self):
+        yield self.x
+        yield self.y
+        yield self.z
+
     def scl(self, o):
         if isinstance(o, vec3):
             return self.set(self.x * o.x, self.y * o.y, self.z * o.z)
@@ -183,10 +188,12 @@ class vec3:
         return self.set(self.x, self.y + dy, self.z)
     def ztrn(self, dz):
         return self.set(self.x, self.y, self.z + dz)
-    def trnps(self, os):
+    def trnps(self, os, cp=False):
         for o in os:
             o.set(self.x + o.x, self.y + o.y, self.z + o.z)
         return os
+    def trnpy(self, py):
+        return (self.trnps(py[0]), [self.trnps(h) for h in py[1]])
 
     def crs(self, o):
         return vec3(self.y * o.z - self.z * o.y,

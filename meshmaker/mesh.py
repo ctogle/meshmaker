@@ -67,7 +67,10 @@ class Mesh(Base):
             for p, n, u in zip(ps, ns, us):
                 data.extend([u.x, u.y, n.x, n.y, n.z, p.x, p.y, p.z])
             for u, v, w in batch(ps, 3):
-                wireframe.append([[u.x, u.y, u.z], [v.x, v.y, v.z], [w.x, w.y, w.z], [u.x, u.y, u.z]])
+                wireframe.append([[u.x, u.y, u.z],
+                                  [v.x, v.y, v.z],
+                                  [w.x, w.y, w.z],
+                                  [u.x, u.y, u.z]])
                 #wireframe.extend([(u, v), (v, w), (w, u)])
         return data, wireframe
 

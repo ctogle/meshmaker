@@ -10,6 +10,7 @@ from .vec3 import vec3
 from .base import Base, Laziness
 from .tform import TForm
 from .model import Model
+from .mesh import Mesh
 from .geometry import bbox
 
 
@@ -79,13 +80,16 @@ class Camera(Base):
         self.aspect_ratio = 16 / 9
         self.speed = 0.01
 
-    def __init__(self, keys, prog, radius=None, target=None):
+    def __init__(self, keys, radius=None, target=None, **kws):
         self.default_radius = 10 if radius is None else radius
         self.default_target = vec3.O() if target is None else target
         self.keys = keys
-        self.mvp = prog['Mvp']
-        self.light = prog['Light']
         self.reset_view()
+
+        self.projection = Matrix44.perspective_projection(
+                        45.0, self.aspect_ratio, 0.1, 100.0)
+        #self.projection = Matrix44.orthogonal_projection(
+        #                0.0, 1024, 768, 0, -1.0, 1.0)
 
     @property
     def xyz(self):
@@ -101,25 +105,85 @@ class Camera(Base):
         up = look.crs(left)
         return look, left, up
 
-    def __call__(self):
+    @property
+    def view(self):
         x, y, z = self.xyz
-        proj = Matrix44.perspective_projection(
-            45.0, self.aspect_ratio, 0.1, 100.0)
         lookat = Matrix44.look_at(
             (            x,             y,             z),
             (self.target.x, self.target.y, self.target.z),
             (            0,             0,             1))
-        self.mvp.write((proj * lookat).astype('f4').tobytes())
-        self.light.value = (x, y, z)
+        return lookat
+
+    @property
+    def viewdir(self):
+        return (self.target - vec3(*self.xyz)).nrm()
+
+
+class ShaderProgram(Base):
+
+    def _readiffile(self, s):
+        if s is not None:
+            return open(s, 'r').read().strip() if os.path.isfile(s) else s
+
+    def __init__(self,
+                 vs='../meshmaker/shaders/main.vs', gs=None,
+                 fs='../meshmaker/shaders/main.fs',
+                 signature=('in_texcoord_0', 'in_normal', 'in_position')):
+        self.vs = vs
+        self.gs = gs
+        self.fs = fs
+        self.signature = signature
+
+    def build(self, ctx):
+        """Compute shader program from context and associated GLSL scripts"""
+        vs = self._readiffile(self.vs)
+        gs = self._readiffile(self.gs)
+        fs = self._readiffile(self.fs)
+        self._ctx = ctx
+        self._program = ctx.program(
+            vertex_shader=vs,
+            geometry_shader=gs,
+            fragment_shader=fs)
+        return self
+
+    def init(self):
+        """Set GLSL uniform variables at start"""
+        self._program["dirLight.direction"].value = (-2.0,-1.0,-3.0)
+        self._program["dirLight.diffuse"].value   = ( 1.0, 1.0, 1.0)
+        self._program["dirLight.ambient"].value   = ( 0.2, 0.2, 0.2)
+        self._program["dirLight.specular"].value  = ( 0.8, 0.8, 0.8)
+        self._program["material.specular"].value  = ( 0.9, 0.9, 0.9)
+        self._program["material.shininess"].value = 100
+
+    def update(self, camera):
+        """Set GLSL uniform variables per frame for camera"""
+        self._program['projection'].write(camera.projection.astype('f4').tobytes())
+        self._program['view'].write(camera.view.astype('f4').tobytes())
+        self._program['viewDir'].value = tuple(camera.viewdir)
+
+    def render(self, vertexdata, material):
+        """Compute function which renders vertexdata using shaders"""
+        vertexdata = np.array(vertexdata)
+        vbo = self._ctx.buffer(vertexdata.astype('f4').tobytes())
+        vao = self._ctx.simple_vertex_array(self._program, vbo, *self.signature)
+
+        def f():
+            if material:
+                material.use()
+            vao.render(moderngl.TRIANGLES)
+
+        return f
 
 
 class Window(Base):
 
-    shaders = {
+    defaultshaders = {
+        'signature': ('in_texcoord_0', 'in_normal', 'in_position'),
         'vertex_shader': '''
             #version 330
 
-            uniform mat4 Mvp;
+            uniform mat4 projection;
+            uniform mat4 view;
 
             in vec3 in_position;
             in vec3 in_normal;
@@ -130,7 +194,7 @@ class Window(Base):
             out vec2 v_text;
 
             void main() {
-                gl_Position = Mvp * vec4(in_position, 1.0);
+                gl_Position = (projection * view) * vec4(in_position, 1.0);
                 v_vert = in_position;
                 v_norm = in_normal;
                 v_text = in_texcoord_0;
@@ -159,6 +223,7 @@ class Window(Base):
     }
 
     def __init__(self, source, texture_directory, **kws):
+        super().__init__(**kws)
         self.source = source
         self.targets = []
 
@@ -168,18 +233,48 @@ class Window(Base):
         self.ctx = self.wnd.ctx
         self.ctx.enable(moderngl.DEPTH_TEST | moderngl.CULL_FACE)
 
-        self.prog = self.ctx.program(**self.shaders)
+        #if not hasattr(self, 'shaders'):
+        #    self.shaders = [self.defaultshaders.copy()]
+
+        if not hasattr(self, 'programs'):
+            vs = os.path.join(os.path.dirname(__file__), 'shaders', 'main.vs')
+            fs = os.path.join(os.path.dirname(__file__), 'shaders', 'main.fs')
+            self.programs = [ShaderProgram(vs=vs, fs=fs)]
+
+        for program in self.programs:
+            program.build(self.ctx).init()
+
+        '''
+        self.programs = []
+        for spec in self.shaders:
+            callback = spec.pop('callback', None)
+            signature = spec.pop('signature',
+                ('in_texcoord_0', 'in_normal', 'in_position'))
+            program = self.ctx.program(**spec)
+            if callback:
+                callback(program)
+            self.programs.append((signature, program))
+        '''
+
+        '''
+        callback = self.shaders.pop('callback', None)
+        signature = self.shaders.pop('signature',
+            ('in_texcoord_0', 'in_normal', 'in_position'))
+        self.programs = [(signature, self.ctx.program(**self.shaders))]
+        if callback:
+            for signature, program in self.programs:
+                callback(program)
+        '''
+
 
         self.materials = LazyMaterials(self.ctx, texture_directory)
 
-        self.camera = Camera(self.wnd.keys, self.prog, **kws)
+        self.camera = Camera(self.wnd.keys, **kws)
 
         self.wnd.mouse_drag_event_func = self.camera.mouse_drag_event
         self.wnd.mouse_scroll_event_func = self.camera.mouse_scroll_event
         self.wnd.mouse_press_event_func = self.camera.mouse_press_event
         self.wnd.key_event_func = self.key_event
-
-        self.run()
 
     def key_event(self, key, action, modifiers):
         self.camera.key_event(key, action, modifiers)
@@ -212,38 +307,50 @@ class Window(Base):
     def render(self, time, frame_time):
         self.ctx.clear(0.9, 0.9, 1.0)
         self.ctx.enable(moderngl.DEPTH_TEST)
-        self.camera()
-        for mode, texture, vao in self.targets:
-            if texture is not None:
-                texture.use()
-            vao.render(mode)
+
+        for program in self.programs:
+            program.update(self.camera)
+
+        #for signature, program in self.programs:
+        #    program['projection'].write(self.camera.projection.astype('f4').tobytes())
+        #    program['view'].write(self.camera.view.astype('f4').tobytes())
+
+        for target in self.targets:
+            target()
+
+        #for mode, texture, vao in self.targets:
+        #    if texture is not None:
+        #        texture.use()
+        #    vao.render(mode)
 
     def axes(self):
+        # TODO: this defies the pattern of default shaders...
         # TODO: draw on top and with colors...
         axes = np.array([[[0, 0, 0], [1, 0, 0], [0, 0, 0]],
                          [[0, 0, 0], [0, 1, 0], [0, 0, 0]],
                          [[0, 0, 0], [0, 0, 1], [0, 0, 0]]])
+        signature, program = self.programs[0]
         vbo = self.ctx.buffer(axes.astype('f4').tobytes())
-        vao = self.ctx.simple_vertex_array(self.prog, vbo, 'in_position')
+        vao = self.ctx.simple_vertex_array(program, vbo, 'in_position')
         return (moderngl.LINES, None, vao)
 
-    def draw_material(self, tf, material, vertices=None, wireframe=None):
+    def draw_material(self, tf, material, T2F_N3F_V3F=None, wireframe=None):
         """Recursively aggregate data from a scene graph for a material"""
-        vertices = [] if vertices is None else vertices
+        T2F_N3F_V3F = [] if T2F_N3F_V3F is None else T2F_N3F_V3F
         wireframe = [] if wireframe is None else wireframe
         if hasattr(tf, 'models'):
             for model in tf.models:
                 for mesh in model.meshes.get(material, ()):
                     try:
                         tridata, wiredata = mesh.T2F_N3F_V3F(tf)
-                        vertices.extend(tridata)
+                        T2F_N3F_V3F.extend(tridata)
                         wireframe.extend(wiredata)
                     except:
                         print(f'failed to generate mesh {mesh}')
                         raise
         for child in tf.children:
-            self.draw_material(child, material, vertices, wireframe)
-        return vertices, wireframe
+            self.draw_material(child, material, T2F_N3F_V3F, wireframe)
+        return T2F_N3F_V3F, wireframe
 
     def update(self):
         """Recompute the scenegraph and vao data (i.e. self.targets)"""
@@ -252,18 +359,69 @@ class Window(Base):
         else:
             self.scene = TForm()
             print(f'Source has no "scene" method: {self.source}')
-        self.targets = [self.axes()]
+
+        #self.targets = [self.axes()]
+        self.targets = []
+
+        # vertex_data -> vbo
+        # program + vbo -> vao
+        # mode + material + vao -> material.use;vao.render(mode)
+
+        # mesh could generate vao,mode,material from program
+        # e.g. T2F_N3F_V3F specific shader program
+
+        # must compute vertex data on a per material basis
+        # can reuse vertex data between shader programs via adaptor
+
         for name in self.materials:
-            vertices, wireframe = self.draw_material(self.scene, name)
-            if vertices:
-                vertices = np.array(vertices)
-                vbo = self.ctx.buffer(vertices.astype('f4').tobytes())
-                vao = self.ctx.simple_vertex_array(self.prog, vbo,
-                    'in_texcoord_0', 'in_normal', 'in_position')
-                self.targets.append((moderngl.TRIANGLES, self.materials[name], vao))
+            vertexdata, _ = self.draw_material(self.scene, name)
+            if vertexdata:
+                material = self.materials[name]
+                for program in self.programs:
+                    render = program.render(vertexdata, material)
+                    self.targets.append(render)
+
+        '''
+        for signature, program in self.programs:
+            for name in self.materials:
+                vertices, wireframe = self.draw_material(self.scene, name)
+                if vertices:
+                    if len(signature) == 2:
+                        mat = None
+                        notuv = lambda i: not ((i % 8 == 0) or (i % 8 == 1))
+                        vertices = [v for i, v in enumerate(vertices) if notuv(i)]
+                    elif len(signature) == 3:
+                        mat = self.materials[name]
+                    vertices = np.array(vertices)
+                    vbo = self.ctx.buffer(vertices.astype('f4').tobytes())
+                    vao = self.ctx.simple_vertex_array(program, vbo, *signature)
+                    self.targets.append((moderngl.TRIANGLES, mat, vao))
+                    #'in_texcoord_0', 'in_normal', 'in_position')
+                    #'in_position', 'in_normal')
+                    #'in_position', 'in_normal', 'in_texcoord_0')
+        '''
 
     @classmethod
     def test(cls, texture_directory, **kws):
         cube = Model.cube_model('generic_0', 1)
         source = Base(scene=(lambda : TForm(models=[cube])))
-        cls(source, texture_directory, **kws)
+        inst = cls(source, texture_directory, **kws)
+        inst.run()
+
+
+def show(instance, texture_directory='../resources/textures', **kws):
+    if not hasattr(instance, 'scene'):
+        if isinstance(instance, TForm):
+            tf = instance
+        elif isinstance(instance, Mesh):
+            model = Model(meshes={'generic_0': [instance]})
+            tf = TForm(models=[model])
+        elif all(isinstance(i, TForm) for i in instance):
+            tf = TForm(children=instance)
+        elif all(isinstance(i, Mesh) for i in instance):
+            model = Model(meshes={'generic_0': instance})
+            tf = TForm(models=[model])
+        else:
+            raise
+        instance = Base(scene=lambda : tf)
+    Window(instance, texture_directory, **kws).run()
