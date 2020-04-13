@@ -50,6 +50,10 @@ class vec3:
 
     def xy(self):
         return vec3(self.x, self.y, 0)
+    def yz(self):
+        return vec3(0, self.y, self.z)
+    def zx(self):
+        return vec3(self.x, 0, self.z)
 
     def cp(self):
         return vec3(self.x, self.y, self.z)
@@ -233,11 +237,15 @@ class vec3:
             loop.append(vec3(sr, 0, 0).rot(quat.av(x * alpha - alpha / 2.0, z)))
         return [p.trn(self) for p in loop]
 
-    def line(self, o, n):
+    def line(self, o, n, ends=False):
         line = []
+        if ends:
+            line.append(self.cp())
         for i in range(n):
             t = (i + 1) / (n + 1)
             line.append(self.lerp(o, t))
+        if ends:
+            line.append(o.cp())
         return line
 
     def spline(self, o, st, ot, n, alpha=0.5):

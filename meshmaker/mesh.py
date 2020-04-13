@@ -1,9 +1,9 @@
-from collections import defaultdict
 from .base import Base, Laziness
 from .vec3 import vec3
 from .quat import quat
 from .geometry import isnear, near, slide, batch, loop_normal
 from .delaunay import triangulation
+from collections import defaultdict
 import numpy as np
 
 
@@ -45,6 +45,19 @@ class FaceTangents(MeshAttribute):
 class Mesh(Base):
     """2-manifold tri/quad mesh object"""
 
+    def wires(self, tf):
+        """Default to no wires"""
+        return []
+
+    def fwires(self, tf):
+        """True face edges"""
+        wires = []
+        for f, face in self:
+            ps = [self.vertices[v] for v in face]
+            ps = tf.transform(ps)
+            wires.extend(list(slide(ps, 2)))
+        return wires
+
     def T2F_N3F_V3F(self, tf, smooth=False):
         """Compute a T2F_N3F_V3F representation for rendering"""
         #self.dissolve()
@@ -63,27 +76,63 @@ class Mesh(Base):
                 us.insert(3, us[2]);us.insert(3, us[0])
                 pass
             else:
+                print(len(ps), ps)
                 raise NotImplementedError
             for p, n, u in zip(ps, ns, us):
                 data.extend([u.x, u.y, n.x, n.y, n.z, p.x, p.y, p.z])
+
             for u, v, w in batch(ps, 3):
                 wireframe.append([[u.x, u.y, u.z],
                                   [v.x, v.y, v.z],
                                   [w.x, w.y, w.z],
                                   [u.x, u.y, u.z]])
                 #wireframe.extend([(u, v), (v, w), (w, u)])
-        return data, wireframe
+
+        #return data, wireframe
+        return data
 
     @classmethod
-    def cube_mesh(cls, r=1):
+    def cube_mesh(cls, r=1, meta='generic_0'):
         """Generate a generate cube mesh instance"""
         mesh = cls()
         bottom = [vec3(-r,-r,-r), vec3( r,-r,-r), vec3( r, r,-r), vec3(-r, r,-r)]
         top    = [vec3(-r,-r, r), vec3( r,-r, r), vec3( r, r, r), vec3(-r, r, r)]
-        mesh.bridge(bottom, top, meta='side')
-        mesh.af(top, meta='top')
-        mesh.af(bottom[::-1], meta='bottom')
+        mesh.bridge(bottom, top, meta=meta)
+        mesh.af(top, meta=meta)
+        mesh.af(bottom[::-1], meta=meta)
         return mesh
+
+    @classmethod
+    def prism(cls, loop, depth, x_align=1.0):
+        """Loop is the projection of the extruded loop in the symmetry plane
+        of the resulting solid, which is a prism by construction"""
+        N = loop_normal(loop)
+        l = (N * (x_align * depth / 2)).trnps([p.cp() for p in loop])
+        r = (N * ((2 - x_align) * -depth / 2)).trnps([p.cp() for p in loop])
+        C = cls()
+        C.apy((l, ()))
+        C.apy((r[::-1], ()))
+        C.bridge(r, l)
+        return C
+
+    def cp(self):
+        """Make a copy of self"""
+        o = self.__class__()
+        o.vertices = [p.cp() for p in self.vertices]
+        o.faces = [(face[:] if face else None) for face in self.faces]
+        o.nface = self.nface
+        for e in self.e2f:
+            o.e2f[e] = self.e2f[e]
+        for v in self.v2f:
+            o.v2f[v] = self.v2f[v].copy()
+        for f in self.meta:
+            o.meta[f] = self.meta[f]
+        return o
+
+    def fp(self):
+        for f, face in self:
+            face.reverse()
+        return self
 
     def __init__(self):
         self.vertices = []
@@ -135,7 +184,7 @@ class Mesh(Base):
                 normals[f] = ns
         return normals
 
-    def vertex_uvs(self):
+    def vertex_uvs(self, **kws):
         """Generate UV coordinate lookup possibly unwrapping missing faces"""
         uvs = self.uvs if getattr(self, 'uvs', None) else {}
         missing = []
@@ -143,12 +192,14 @@ class Mesh(Base):
             if uvs.get(f) is None:
                 missing.append(f)
         if missing:
-            seams = self.perimeter(missing)
-            seams = set([x for y in seams for x in y])
+            seams = kws.pop('seams', None)
+            if seams is None:
+                seams = self.perimeter(missing)
+                seams = set([x for y in seams for x in y])
             while missing:
                 f = missing.pop(0)
                 if uvs.get(f) is None:
-                    self.unwrap_uvs(f, seams=seams, uvs=uvs)
+                    self.unwrap_uvs(f, seams=seams, uvs=uvs, **kws)
         return uvs
 
     def unwrap_uvs(self, f=None, O=None, X=None, Y=None, S=None, seams=None, uvs=None):
@@ -384,14 +435,14 @@ class Mesh(Base):
             self.rf(f)
             v = face.index(i) - 2
             if face[v] == j:
-                new_faces.append(self.af((i, u, face[v + 1]), meta=meta))
-                new_faces.append(self.af((u, j, face[v + 1]), meta=meta))
+                new_faces.append(self.af([i, u, face[v + 1]], meta=meta))
+                new_faces.append(self.af([u, j, face[v + 1]], meta=meta))
             else:
                 w = face[v + 1]
                 v = face[v]
                 x = self.av(self.vertices[w].lerp(self.vertices[v], a), e=e)
-                new_faces.append(self.af((i, u, x, w), meta=meta))
-                new_faces.append(self.af((u, j, v, x), meta=meta))
+                new_faces.append(self.af([i, u, x, w], meta=meta))
+                new_faces.append(self.af([u, j, v, x], meta=meta))
         return new_faces
 
     def edgeloopsplit(self, i, j, a=0.5, loop=None):

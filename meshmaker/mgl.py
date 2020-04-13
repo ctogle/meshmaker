@@ -11,7 +11,7 @@ from .base import Base, Laziness
 from .tform import TForm
 from .model import Model
 from .mesh import Mesh
-from .geometry import bbox
+from .geometry import bbox, batch, slide
 
 
 class LazyMaterials(Laziness):
@@ -125,14 +125,14 @@ class ShaderProgram(Base):
         if s is not None:
             return open(s, 'r').read().strip() if os.path.isfile(s) else s
 
-    def __init__(self,
-                 vs='../meshmaker/shaders/main.vs', gs=None,
-                 fs='../meshmaker/shaders/main.fs',
-                 signature=('in_texcoord_0', 'in_normal', 'in_position')):
+    def __init__(self, vs=None, gs=None, fs=None,
+                 signature=None, primitive=None, active=True):
         self.vs = vs
         self.gs = gs
         self.fs = fs
         self.signature = signature
+        self.primitive = primitive
+        self.active = active
 
     def build(self, ctx):
         """Compute shader program from context and associated GLSL scripts"""
@@ -148,10 +148,41 @@ class ShaderProgram(Base):
 
     def init(self):
         """Set GLSL uniform variables at start"""
-        self._program["dirLight.direction"].value = (-2.0,-1.0,-3.0)
-        self._program["dirLight.diffuse"].value   = ( 1.0, 1.0, 1.0)
-        self._program["dirLight.ambient"].value   = ( 0.2, 0.2, 0.2)
-        self._program["dirLight.specular"].value  = ( 0.8, 0.8, 0.8)
+        pass
+
+    def update(self, camera):
+        """Set GLSL uniform variables per frame for camera"""
+        pass
+
+    def render(self, vertexdata, wiredata, material):
+        """Compute function which renders vertexdata using shaders"""
+
+        def f():
+            pass
+
+        return f
+
+
+class MainShader(ShaderProgram):
+
+    def __init__(self):
+        vs = os.path.join(os.path.dirname(__file__), 'shaders', 'main.vs')
+        fs = os.path.join(os.path.dirname(__file__), 'shaders', 'main.fs')
+        signature = ('in_texcoord_0', 'in_normal', 'in_position')
+        primitive = moderngl.TRIANGLES
+        super().__init__(vs=vs, fs=fs, signature=signature, primitive=primitive)
+        self.ka, self.kd, self.ks = 0.1, 0.5, 0.0
+
+    def init(self):
+        """Set GLSL uniform variables at start"""
+        self._program["dirLight1.direction"].value = (-2.0,-1.0,-3.0)
+        self._program["dirLight1.diffuse"].value   = (self.kd, self.kd, self.kd)
+        self._program["dirLight1.ambient"].value   = (self.ka, self.ka, self.ka)
+        self._program["dirLight1.specular"].value  = (self.ks, self.ks, self.ks)
+        self._program["dirLight2.direction"].value = ( 2.0, 1.0, 3.0)
+        self._program["dirLight2.diffuse"].value   = (self.kd, self.kd, self.kd)
+        self._program["dirLight2.ambient"].value   = (self.ka, self.ka, self.ka)
+        self._program["dirLight2.specular"].value  = (self.ks, self.ks, self.ks)
         self._program["material.specular"].value  = ( 0.9, 0.9, 0.9)
         self._program["material.shininess"].value = 100
 
@@ -161,111 +192,174 @@ class ShaderProgram(Base):
         self._program['view'].write(camera.view.astype('f4').tobytes())
         self._program['viewDir'].value = tuple(camera.viewdir)
 
-    def render(self, vertexdata, material):
+    def render(self, vertexdata, wiredata, material):
         """Compute function which renders vertexdata using shaders"""
-        vertexdata = np.array(vertexdata)
-        vbo = self._ctx.buffer(vertexdata.astype('f4').tobytes())
-        vao = self._ctx.simple_vertex_array(self._program, vbo, *self.signature)
+        if vertexdata:
+            vertexdata = np.array(vertexdata)
+            vbo = self._ctx.buffer(vertexdata.astype('f4').tobytes())
+            vao = self._ctx.simple_vertex_array(self._program, vbo, *self.signature)
 
-        def f():
-            if material:
-                material.use()
-            vao.render(moderngl.TRIANGLES)
+            def f():
+                if material:
+                    material.use()
+                vao.render(self.primitive)
+        else:
+            f = lambda: None
+
+        return f
+
+
+class EdgeShader(ShaderProgram):
+
+    def __init__(self):
+        vs='''
+            #version 330
+            uniform mat4 projection;
+            uniform mat4 view;
+
+            in vec3 in_vert;
+
+            void main() {
+                mat4 Mvp = projection * view;
+                gl_Position = Mvp * vec4(in_vert, 1.0);
+            }
+        '''
+        fs='''
+            #version 330
+            out vec4 f_color;
+            void main() {
+                f_color = vec4(0.1, 1.0, 0.1, 1.0);
+            }
+        '''
+        super().__init__(vs=vs, fs=fs,
+                         primitive=moderngl.LINES,
+                         signature=('in_vert', ))
+
+    def init(self):
+        pass
+
+    def update(self, camera):
+        self._program['projection'].write(camera.projection.astype('f4').tobytes())
+        self._program['view'].write(camera.view.astype('f4').tobytes())
+
+    def wiredata(self, vertexdata, dn=0.002):
+        positions = []
+        for i, (v1, v2, v3) in enumerate(batch(list(batch(vertexdata, 8)), 3)):
+            n1, n2, n3 = vec3(*v1[2:5]), vec3(*v2[2:5]), vec3(*v3[2:5])
+            p1, p2, p3 = vec3(*v1[5:8]), vec3(*v2[5:8]), vec3(*v3[5:8])
+            p1.trn(n1 * dn)
+            p2.trn(n2 * dn)
+            p3.trn(n3 * dn)
+            positions.extend(p1)
+            positions.extend(p2)
+            positions.extend(p2)
+            positions.extend(p3)
+            positions.extend(p3)
+            positions.extend(p1)
+        positions = np.array(positions)
+        return positions
+
+    def render(self, vertexdata, wiredata, material):
+        if vertexdata:
+            positions = self.wiredata(vertexdata)
+            vbo = self._ctx.buffer(positions.astype('f4').tobytes())
+            vao = self._ctx.simple_vertex_array(self._program, vbo, *self.signature)
+
+            def f():
+                vao.render(self.primitive)
+        else:
+            f = lambda: None
+
+        return f
+
+
+class WireShader(ShaderProgram):
+
+    def __init__(self, color=vec3.X()):
+        vs='''
+            #version 330
+            uniform mat4 projection;
+            uniform mat4 view;
+
+            in vec3 in_vert;
+
+            void main() {
+                mat4 Mvp = projection * view;
+                gl_Position = Mvp * vec4(in_vert, 1.0);
+            }
+        '''
+        fs='''
+            #version 330
+            out vec4 f_color;
+            void main() {
+                f_color = vec4(%0.2f, %0.2f, %0.2f, 1.0);
+            }
+        ''' % tuple(color)
+        super().__init__(vs=vs, fs=fs,
+                         primitive=moderngl.LINES,
+                         signature=('in_vert', ))
+
+    def init(self):
+        pass
+
+    def update(self, camera):
+        self._program['projection'].write(camera.projection.astype('f4').tobytes())
+        self._program['view'].write(camera.view.astype('f4').tobytes())
+
+    def render(self, vertexdata, wiredata, material):
+        positions = []
+        #for u, v in slide(wiredata, 2):
+        for u, v in wiredata:
+            positions.extend(u)
+            positions.extend(v)
+
+        if positions:
+            positions = np.array(positions)
+            vbo = self._ctx.buffer(positions.astype('f4').tobytes())
+            vao = self._ctx.simple_vertex_array(self._program, vbo, *self.signature)
+
+            def f():
+                vao.render(self.primitive)
+        else:
+            f = lambda : None
 
         return f
 
 
 class Window(Base):
 
-    defaultshaders = {
-        'signature': ('in_texcoord_0', 'in_normal', 'in_position'),
-        'vertex_shader': '''
-            #version 330
-
-            uniform mat4 projection;
-            uniform mat4 view;
-
-            in vec3 in_position;
-            in vec3 in_normal;
-            in vec2 in_texcoord_0;
-
-            out vec3 v_vert;
-            out vec3 v_norm;
-            out vec2 v_text;
-
-            void main() {
-                gl_Position = (projection * view) * vec4(in_position, 1.0);
-                v_vert = in_position;
-                v_norm = in_normal;
-                v_text = in_texcoord_0;
-            }
-        ''',
-        'fragment_shader': '''
-            #version 330
-
-            uniform vec3 Light;
-            uniform sampler2D Texture;
-
-            in vec3 v_vert;
-            in vec3 v_norm;
-            in vec2 v_text;
-
-            out vec4 f_color;
-
-            void main() {
-                float lum = clamp(dot(normalize(Light - v_vert), normalize(v_norm)), 0.0, 1.0) * 0.3 + 0.4;
-                vec3 base = vec3(0.5, 0.5, 0.5) * lum;
-                vec3 spec = vec3(1.0, 1.0, 1.0) * pow(lum, 5.7);
-                vec4 tex = texture(Texture, v_text);
-                f_color = vec4(base * 0.1 + tex.rgb * lum + spec, tex.a);
-            }
-        ''',
-    }
+    def toggleshader(self, shader):
+        def toggle():
+            shader.active = not shader.active
+            self.update()
+        return toggle
 
     def __init__(self, source, texture_directory, **kws):
         super().__init__(**kws)
         self.source = source
         self.targets = []
 
+        if not hasattr(self, 'background'):
+            self.background = vec3(0.1, 0.1, 0.1)
+
         settings.WINDOW['class'] = 'moderngl_window.context.pyglet.Window'
         self.wnd = moderngl_window.create_window_from_settings()
 
         self.ctx = self.wnd.ctx
-        self.ctx.enable(moderngl.DEPTH_TEST | moderngl.CULL_FACE)
+        self.ctx.enable(moderngl.DEPTH_TEST | moderngl.CULL_FACE | moderngl.BLEND)
 
-        #if not hasattr(self, 'shaders'):
-        #    self.shaders = [self.defaultshaders.copy()]
+        #gl2.glEnable(GL.GL_BLEND);
+        #gl2.glBlendFunc(GL.GL_SRC_ALPHA, GL.GL_ONE_MINUS_SRC_ALPHA);
 
         if not hasattr(self, 'programs'):
-            vs = os.path.join(os.path.dirname(__file__), 'shaders', 'main.vs')
-            fs = os.path.join(os.path.dirname(__file__), 'shaders', 'main.fs')
-            self.programs = [ShaderProgram(vs=vs, fs=fs)]
+            #self.programs = [MainShader(), EdgeShader()]
+            self.programs = [MainShader(), WireShader()]
 
-        for program in self.programs:
+        self.shaderkeys = {}
+        for i, program in enumerate(self.programs):
             program.build(self.ctx).init()
-
-        '''
-        self.programs = []
-        for spec in self.shaders:
-            callback = spec.pop('callback', None)
-            signature = spec.pop('signature',
-                ('in_texcoord_0', 'in_normal', 'in_position'))
-            program = self.ctx.program(**spec)
-            if callback:
-                callback(program)
-            self.programs.append((signature, program))
-        '''
-
-        '''
-        callback = self.shaders.pop('callback', None)
-        signature = self.shaders.pop('signature',
-            ('in_texcoord_0', 'in_normal', 'in_position'))
-        self.programs = [(signature, self.ctx.program(**self.shaders))]
-        if callback:
-            for signature, program in self.programs:
-                callback(program)
-        '''
-
+            key = getattr(self.wnd.keys, f'F{i + 1}')
+            self.shaderkeys[key] = self.toggleshader(program)
 
         self.materials = LazyMaterials(self.ctx, texture_directory)
 
@@ -286,6 +380,8 @@ class Window(Base):
                 self.update()
             elif key == keys.TAB:
                 self.ctx.wireframe = not self.ctx.wireframe
+            elif key in self.shaderkeys:
+                self.shaderkeys[key]()
             else:
                 parameters = getattr(self.source, 'parameters', {})
                 operation = parameters.get(key)
@@ -305,25 +401,14 @@ class Window(Base):
         self.wnd.destroy()
 
     def render(self, time, frame_time):
-        self.ctx.clear(0.9, 0.9, 1.0)
+        self.ctx.clear(*self.background)
         self.ctx.enable(moderngl.DEPTH_TEST)
-
         for program in self.programs:
             program.update(self.camera)
-
-        #for signature, program in self.programs:
-        #    program['projection'].write(self.camera.projection.astype('f4').tobytes())
-        #    program['view'].write(self.camera.view.astype('f4').tobytes())
-
         for target in self.targets:
             target()
 
-        #for mode, texture, vao in self.targets:
-        #    if texture is not None:
-        #        texture.use()
-        #    vao.render(mode)
-
-    def axes(self):
+    def ___axes(self):
         # TODO: this defies the pattern of default shaders...
         # TODO: draw on top and with colors...
         axes = np.array([[[0, 0, 0], [1, 0, 0], [0, 0, 0]],
@@ -334,23 +419,24 @@ class Window(Base):
         vao = self.ctx.simple_vertex_array(program, vbo, 'in_position')
         return (moderngl.LINES, None, vao)
 
-    def draw_material(self, tf, material, T2F_N3F_V3F=None, wireframe=None):
+    def draw_material(self, tf, material, T2F_N3F_V3F=None, wires=None):
         """Recursively aggregate data from a scene graph for a material"""
         T2F_N3F_V3F = [] if T2F_N3F_V3F is None else T2F_N3F_V3F
-        wireframe = [] if wireframe is None else wireframe
+        wires = [] if wires is None else wires
         if hasattr(tf, 'models'):
             for model in tf.models:
                 for mesh in model.meshes.get(material, ()):
                     try:
-                        tridata, wiredata = mesh.T2F_N3F_V3F(tf)
+                        tridata = mesh.T2F_N3F_V3F(tf)
+                        wiredata = mesh.wires(tf)
                         T2F_N3F_V3F.extend(tridata)
-                        wireframe.extend(wiredata)
+                        wires.extend(wiredata)
                     except:
                         print(f'failed to generate mesh {mesh}')
                         raise
         for child in tf.children:
-            self.draw_material(child, material, T2F_N3F_V3F, wireframe)
-        return T2F_N3F_V3F, wireframe
+            self.draw_material(child, material, T2F_N3F_V3F, wires)
+        return T2F_N3F_V3F, wires
 
     def update(self):
         """Recompute the scenegraph and vao data (i.e. self.targets)"""
@@ -361,45 +447,16 @@ class Window(Base):
             print(f'Source has no "scene" method: {self.source}')
 
         #self.targets = [self.axes()]
+
         self.targets = []
-
-        # vertex_data -> vbo
-        # program + vbo -> vao
-        # mode + material + vao -> material.use;vao.render(mode)
-
-        # mesh could generate vao,mode,material from program
-        # e.g. T2F_N3F_V3F specific shader program
-
-        # must compute vertex data on a per material basis
-        # can reuse vertex data between shader programs via adaptor
-
         for name in self.materials:
-            vertexdata, _ = self.draw_material(self.scene, name)
-            if vertexdata:
+            vertexdata, wiredata = self.draw_material(self.scene, name)
+            if vertexdata or wiredata:
                 material = self.materials[name]
                 for program in self.programs:
-                    render = program.render(vertexdata, material)
-                    self.targets.append(render)
-
-        '''
-        for signature, program in self.programs:
-            for name in self.materials:
-                vertices, wireframe = self.draw_material(self.scene, name)
-                if vertices:
-                    if len(signature) == 2:
-                        mat = None
-                        notuv = lambda i: not ((i % 8 == 0) or (i % 8 == 1))
-                        vertices = [v for i, v in enumerate(vertices) if notuv(i)]
-                    elif len(signature) == 3:
-                        mat = self.materials[name]
-                    vertices = np.array(vertices)
-                    vbo = self.ctx.buffer(vertices.astype('f4').tobytes())
-                    vao = self.ctx.simple_vertex_array(program, vbo, *signature)
-                    self.targets.append((moderngl.TRIANGLES, mat, vao))
-                    #'in_texcoord_0', 'in_normal', 'in_position')
-                    #'in_position', 'in_normal')
-                    #'in_position', 'in_normal', 'in_texcoord_0')
-        '''
+                    if program.active:
+                        render = program.render(vertexdata, wiredata, material)
+                        self.targets.append(render)
 
     @classmethod
     def test(cls, texture_directory, **kws):
@@ -410,6 +467,15 @@ class Window(Base):
 
 
 def show(instance, texture_directory='../resources/textures', **kws):
+    """Possible valid inputs:
+
+        - Any object with a `scene` method
+        - Tform instance
+        - Mesh instance
+        - Sequence of TForm instances
+        - Sequence of Mesh instances
+
+    """
     if not hasattr(instance, 'scene'):
         if isinstance(instance, TForm):
             tf = instance

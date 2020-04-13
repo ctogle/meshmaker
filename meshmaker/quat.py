@@ -31,7 +31,12 @@ class quat:
         else:
             v = x.crs(y).nrm()
             if isnear(v.dot(v), 0):
-                v = vec3.Z()
+                v = x.crs(vec3.X()).nrm()
+                if isnear(v.dot(v), 0):
+                    v = x.crs(vec3.Y()).nrm()
+                    if isnear(v.dot(v), 0):
+                        raise
+                #v = vec3.Z()
             return cls.av(a, v)
 
     @classmethod
