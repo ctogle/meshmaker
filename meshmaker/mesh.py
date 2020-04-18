@@ -3,6 +3,7 @@ from .vec3 import vec3
 from .quat import quat
 from .geometry import isnear, near, slide, batch, loop_normal
 from .delaunay import triangulation
+from .bsp import BSP
 from collections import defaultdict
 import numpy as np
 
@@ -134,6 +135,30 @@ class Mesh(Base):
             face.reverse()
         return self
 
+    @classmethod
+    def from_bsp(cls, bsp):
+        mesh = cls()
+        for loop in bsp.all_loops():
+            mesh.af(loop)
+        return mesh
+
+    def union(self, other):
+        union = BSP.from_mesh(self).union(BSP.from_mesh(other))
+        return self.__class__.from_bsp(union)
+
+    def intersect(self, other):
+        union = BSP.from_mesh(self).intersect(BSP.from_mesh(other))
+        return self.__class__.from_bsp(union)
+
+    def difference(self, other):
+        union = BSP.from_mesh(self).difference(BSP.from_mesh(other))
+        return self.__class__.from_bsp(union)
+
+    def split(self, O, N):
+        """Split via a plane"""
+        u, v = BSP.from_mesh(self).split(O, N)
+        return self.__class__.from_bsp(u), self.__class__.from_bsp(v)
+
     def __init__(self):
         self.vertices = []
         self.faces = []
@@ -264,6 +289,17 @@ class Mesh(Base):
                     if near(fN[f].ang(fN[right]), alpha) >= alpha:
                         seams.add((i, j))
         return seams
+
+    def offset(self, r=1):
+        """Contract the surfaces of self along their normals"""
+        face_normals = self.face_normals()
+        delta = {}
+        for v, p in enumerate(self.vertices):
+            if p is not None:
+                delta[v] = vec3.sum([face_normals[o] for o in self.v2f[v]]).nrm() * -r
+        for v, dp in delta.items():
+            self.vertices[v].trn(dp)
+        return self
 
     def dissolve(self):
         """Merge duplicate vertices"""

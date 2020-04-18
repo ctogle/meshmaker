@@ -50,8 +50,10 @@ class vec3:
 
     def xy(self):
         return vec3(self.x, self.y, 0)
+
     def yz(self):
         return vec3(0, self.y, self.z)
+
     def zx(self):
         return vec3(self.x, 0, self.z)
 
@@ -186,16 +188,21 @@ class vec3:
 
     def trn(self, o):
         return self.set(self.x + o.x, self.y + o.y, self.z + o.z)
+
     def xtrn(self, dx):
         return self.set(self.x + dx, self.y, self.z)
+
     def ytrn(self, dy):
         return self.set(self.x, self.y + dy, self.z)
+
     def ztrn(self, dz):
         return self.set(self.x, self.y, self.z + dz)
+
     def trnps(self, os, cp=False):
         for o in os:
             o.set(self.x + o.x, self.y + o.y, self.z + o.z)
         return os
+
     def trnpy(self, py):
         return (self.trnps(py[0]), [self.trnps(h) for h in py[1]])
 

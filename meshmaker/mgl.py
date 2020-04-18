@@ -1,5 +1,6 @@
 import os
 import numpy as np
+#import itertools
 from pyrr import Matrix44
 from PIL import Image
 import moderngl
@@ -16,13 +17,21 @@ from .geometry import bbox, batch, slide
 
 class LazyMaterials(Laziness):
 
-    def __init__(self, ctx, texture_directory, **kws):
-        self.textures = {}
+    @classmethod
+    def list(cls, texture_directory):
         for r, ds, fs in os.walk(texture_directory):
             for f in fs:
                 name = f[:f.rfind('.')]
                 path = os.path.join(r, f)
-                self.textures[name] = path
+                yield (name, path)
+
+    #generics = list(filter(lambda m: 'generic_' in m, LazyMaterials.list()))
+    #generics = itertools.cycle(available)
+
+    def __init__(self, ctx, texture_directory, **kws):
+        self.textures = {}
+        for name, path in self.list(texture_directory):
+            self.textures[name] = path
         super().__init__(self.method(ctx), **kws)
 
     def __iter__(self):
