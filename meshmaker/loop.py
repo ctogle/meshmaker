@@ -1,8 +1,9 @@
 from .vec3 import vec3
 from .quat import quat
-from .geometry import slide
+from .geometry import slide, isnear, sintsxyp
 from .planargraph import planargraph
 from .delaunay import triangulation
+import numpy as np
 from contextlib import contextmanager
 
 
