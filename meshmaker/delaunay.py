@@ -1,7 +1,8 @@
 from .plt import plt, plot, plot_loop, plot_point
 from .vec3 import vec3
 from .geometry import orient2d
-from .geometry import sintsxyp, loop_contains_triangle, circumcircle
+from .geometry import sintsxyp, circumcircle
+#from .geometry import sintsxyp, loop_contains_triangle, circumcircle
 
 import numpy as np
 from tqdm import tqdm
@@ -275,6 +276,16 @@ class triangulation:
             print(self.points[nv], p, self.points[nv].d(p))
             raise ValueError('point already located!')
 
+    def containstri(self, loop, a, b, c):
+        if not (a.inbxy(loop) or a.onbxy(loop, ie=True)):
+            return False
+        elif not (b.inbxy(loop) or b.onbxy(loop, ie=True)):
+            return False
+        elif not (c.inbxy(loop) or c.onbxy(loop, ie=True)):
+            return False
+        else:
+            return vec3.com((a, b, c)).inbxy(loop)
+
     def prune(self, boundary, holes, edges, e):
         """remove triangles either outside of the boundary or inside one of the
         holes replace ghost triangles such that the targeted edges are included"""
@@ -284,9 +295,10 @@ class triangulation:
                 extras.append(triangle)
             else:
                 up, vp, wp = (self.points[x] for x in triangle)
-                if loop_contains_triangle(boundary, up, vp, wp):
+                #if loop_contains_triangle(boundary, up, vp, wp):
+                if self.containstri(boundary, up, vp, wp):
                     for hole in holes:
-                        if loop_contains_triangle(hole, up, vp, wp):
+                        if self.containstri(hole, up, vp, wp):
                             extras.append(triangle)
                             break
                 else:

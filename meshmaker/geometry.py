@@ -170,8 +170,8 @@ def subdivide_triangles(old):
     return new
 
 
-def slide(loop, n=1, m=0):
-    queue = loop[:] + loop[:n]
+def slide(iterable, n=1, m=0):
+    queue = iterable[:] + iterable[:n]
     while len(queue) > n + m:
         yield queue[:n]
         queue.pop(0)
@@ -183,7 +183,11 @@ def batch(iterable, n=1):
         yield iterable[ndx:min(ndx + n, l)]
 
 
-def loopO(loop):
+
+
+
+
+def __loopO(loop):
     """Return a lexicographical loop origin index."""
     from .vec3 import vec3
 
@@ -222,7 +226,8 @@ def loop_normal(loop):
     return pn.nrm()
 
 
-def loop_contains(loop, other):
+# used by loop_exterior
+def __loop_contains(loop, other):
     #raise NotImplementedError('NOTE: current implementation is not reliable')
     #print('NOTE: current implementation is not reliable')
     for p in loop:
@@ -235,7 +240,8 @@ def loop_contains(loop, other):
         return False
 
 
-def loop_contains_triangle(loop, a, b, c):
+# used in delaunay
+def __loop_contains_triangle(loop, a, b, c):
     if not (a.inbxy(loop) or a.onbxy(loop, ie=True)):
         return False
     elif not (b.inbxy(loop) or b.onbxy(loop, ie=True)):
@@ -247,7 +253,9 @@ def loop_contains_triangle(loop, a, b, c):
         return vec3.com((a, b, c)).inbxy(loop)
 
 
-def loop_exterior(loops):
+# used in terrain to exclude eloop of polygon
+# USE LOOP_AREA SORTING LIKE IN PLANARGRAPH.POLYGON!!
+def __loop_exterior(loops):
     """find the one loop in loops which contains the others"""
     n_loops = len(loops)
     exterior = 0
@@ -258,7 +266,7 @@ def loop_exterior(loops):
     return exterior
 
 
-def loop_offset(loop, r, closed=True, r0=10000):
+def __loop_offset(loop, r, closed=True, r0=10000):
     """loop contract for simple cases"""
     from .vec3 import vec3
     from .quat import quat
@@ -304,7 +312,8 @@ def loop_offset(loop, r, closed=True, r0=10000):
     return offset
 
 
-def loop_contract(loop, r):
+# not in use
+def __loop_contract(loop, r):
     from .vec3 import vec3
     from .mesh import planargraph
     if loop_normal(loop).z < 0:
@@ -336,7 +345,7 @@ def loop_contract(loop, r):
     return loops[1]
 
 
-def loop_split(loop, maxlen):
+def __loop_split(loop, maxlen):
     """Return new loop where no edge is greater than maxlen in length.
 
     Args:
@@ -358,7 +367,7 @@ def loop_split(loop, maxlen):
                 n += 1
             newloop.extend(u.line(v, n - 1))
     return newloop
-def edge_split(loop, maxlen=10):
+def __edge_split(loop, maxlen=10):
     raise NotImplementedError('is this trash?')
     newloop = []
     for i in range(1, len(loop)):
@@ -373,7 +382,7 @@ def edge_split(loop, maxlen=10):
     return newloop
 
 
-def loop_smooth(loop, weight=0.1, iterations=1):
+def __loop_smooth(loop, weight=0.1, iterations=1):
     from .vec3 import vec3
     for j in range(iterations):
         dps = []
