@@ -7,6 +7,7 @@ import moderngl
 import moderngl_window
 from moderngl_window.conf import settings
 from moderngl_window.timers.clock import Timer
+from moderngl_window import screenshot
 from .vec3 import vec3
 from .base import Base, Laziness
 from .tform import TForm
@@ -351,6 +352,7 @@ class Window(Base):
         if not hasattr(self, 'background'):
             self.background = vec3(0.1, 0.1, 0.1)
 
+        settings.apply_from_dict(dict(SCREENSHOT_PATH='screenshots'))
         settings.WINDOW['class'] = 'moderngl_window.context.pyglet.Window'
         self.wnd = moderngl_window.create_window_from_settings()
 
@@ -387,6 +389,9 @@ class Window(Base):
                 self.wnd.close()
             elif key == keys.U:
                 self.update()
+            elif key == keys.P:
+                self.ctx.fbo.viewport = self.wnd.viewport[:2] + self.wnd.size
+                screenshot.create(self.ctx.fbo)
             elif key == keys.TAB:
                 self.ctx.wireframe = not self.ctx.wireframe
             elif key in self.shaderkeys:

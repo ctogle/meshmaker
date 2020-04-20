@@ -5,6 +5,7 @@ from .geometry import isnear, near, slide, batch, loop_normal
 from .delaunay import triangulation
 from .bsp import BSP
 from collections import defaultdict
+from functools import reduce
 import numpy as np
 
 
@@ -141,6 +142,11 @@ class Mesh(Base):
         for loop in bsp.all_loops():
             mesh.af(loop)
         return mesh
+
+    @classmethod
+    def Union(cls, *meshes):
+        bsps = [BSP.from_mesh(mesh) for mesh in meshes]
+        return cls.from_bsp(reduce(lambda x, y: x.union(y), bsps))
 
     def union(self, other):
         union = BSP.from_mesh(self).union(BSP.from_mesh(other))
