@@ -344,7 +344,7 @@ class Window(Base):
             self.update()
         return toggle
 
-    def __init__(self, source, texture_directory, **kws):
+    def __init__(self, source, texture_directory, screenshot_directory, **kws):
         super().__init__(**kws)
         self.source = source
         self.targets = []
@@ -352,7 +352,7 @@ class Window(Base):
         if not hasattr(self, 'background'):
             self.background = vec3(0.1, 0.1, 0.1)
 
-        settings.apply_from_dict(dict(SCREENSHOT_PATH='screenshots'))
+        settings.apply_from_dict(dict(SCREENSHOT_PATH=screenshot_directory))
         settings.WINDOW['class'] = 'moderngl_window.context.pyglet.Window'
         self.wnd = moderngl_window.create_window_from_settings()
 
@@ -480,7 +480,10 @@ class Window(Base):
         inst.run()
 
 
-def show(instance, texture_directory='../resources/textures', **kws):
+def show(instance,
+         texture_directory='../resources/textures',
+         screenshot_directory='../resources/screenshots',
+         **kws):
     """Possible valid inputs:
 
         - Any object with a `scene` method
@@ -504,4 +507,4 @@ def show(instance, texture_directory='../resources/textures', **kws):
         else:
             raise
         instance = Base(scene=lambda : tf)
-    Window(instance, texture_directory, **kws).run()
+    Window(instance, texture_directory, screenshot_directory, **kws).run()
