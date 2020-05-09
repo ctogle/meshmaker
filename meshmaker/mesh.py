@@ -299,10 +299,18 @@ class Mesh(Base):
     def offset(self, r=1):
         """Contract the surfaces of self along their normals"""
         face_normals = self.face_normals()
-        delta = {}
+        delta = defaultdict(list)
         for v, p in enumerate(self.vertices):
             if p is not None:
-                delta[v] = vec3.sum([face_normals[o] for o in self.v2f[v]]).nrm() * -r
+                for o in self.v2f[v]:
+                    N = face_normals[o]
+                    for dN in delta[v]:
+                        if dN.isnear(N):
+                            break
+                    else:
+                        delta[v].append((N * -r))
+                delta[v] = vec3.sum(delta[v])
+                #delta[v] = vec3.sum([face_normals[o] for o in self.v2f[v]]).nrm() * -r
         for v, dp in delta.items():
             self.vertices[v].trn(dp)
         return self

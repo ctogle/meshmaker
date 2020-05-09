@@ -2,7 +2,6 @@ from .plt import plt, plot, plot_loop, plot_point
 from .vec3 import vec3
 from .geometry import orient2d
 from .geometry import sintsxyp, circumcircle
-#from .geometry import sintsxyp, loop_contains_triangle, circumcircle
 
 import numpy as np
 from tqdm import tqdm

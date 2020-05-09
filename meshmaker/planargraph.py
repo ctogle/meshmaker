@@ -3,7 +3,6 @@ from collections import defaultdict
 from .base import Base
 from .vec3 import vec3
 from .quat import quat
-
 from .delaunay import triangulation
 from .geometry import sintsxyp, loop_area, loop_normal, slide, isnear
 
@@ -56,20 +55,24 @@ class planargraph:
                 o.ne(i, j, **e)
         return o
 
-    def __init__(self, segs=None, epsilon=0.00001):
+    def __init__(self, segs=None, loops=None, epsilon=0.00001):
         self.vertices = []
         self.vertex_count = 0
         self.rings = defaultdict(set)
         self.edges = []
         self.edge_count = 0
         self.edge_lookup = {}
+        if loops:
+            for loop in loops:
+                for u, v in slide(loop, 2):
+                    self.ae(u.quant(), v.quant(), epsilon)
         if segs:
             for u, v in segs:
             #    i, j = self.av(u), self.av(v)
             #    self.ne(i, j)
             #self.dedupe()
                 try:
-                    self.ae(u, v, epsilon)
+                    self.ae(u.quant(), v.quant(), epsilon)
                 except AssertionError:
                     print('bad segment (too short?)')
                     pass
@@ -409,11 +412,33 @@ class planargraph:
 
     def loops(self):
         loops = set()
-        for i, j, properties in filter(lambda e: bool(e), self.edges):
+        for i, j, properties in filter(None, self.edges):
             loops.add(self.loop(i, j, -1))
         return list(loops)
 
+    def loop_tree(self):
+        """Compute loops and their hierarchy"""
+
+        raise ValueError('this is broken')
+
+        def contains(a, b):
+            if loop_normal(a).z < 0:
+                a = a[::-1]
+            inside = all(p.inbxy(a, True) for p in b)
+            return inside and (loop_area(a) > loop_area(b))
+        loops = [[self.vertices[i].cp() for i in l] for l in self.loops()]
+        areas = [loop_area(l) for l in loops]
+        exter = [l for l, a in zip(loops, areas) if (a < 0)]
+        holes = [[] for e in exter]
+        inter = [l for l, a in zip(loops, areas) if (a > 0)]
+        for e, h in zip(exter, holes):
+            for i in inter:
+                if contains(e, i):
+                    h.append(i)
+        return exter, holes
+
     def polygon(self):
+        # TODO: this is basically deprecated by loop_tree
         loops = [[self.vertices[i].cp() for i in l] for l in self.loops()]
         for loop in loops:
             if loop_normal(loop).z < 0:

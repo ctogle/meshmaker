@@ -202,9 +202,6 @@ def loop_normal(loop):
     pn = vec3.O()
     for u, v, w in slide(loop, 3):
         uv, vw = (v - u), (w - v)
-        #alpha = uv.ang(vw)
-        #if alpha > 0:
-        #    pn.trn(uv.crs(vw).nrm())
         pn.trn(uv.crs(vw))
     assert not pn.isO(), 'zero vector in loop_normal!'
     return pn.nrm()

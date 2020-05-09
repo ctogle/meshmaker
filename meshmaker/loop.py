@@ -1,41 +1,89 @@
 from .vec3 import vec3
 from .quat import quat
-from .geometry import slide, isnear, sintsxyp
+from .geometry import slide, isnear, sintsxyp, bbox, loop_area, loop_normal
 from .planargraph import planargraph
 from .delaunay import triangulation
+from .plt import *
 import numpy as np
 from contextlib import contextmanager
 
 
-class loop:
+# TODO: make this a loops class, so that boolean ops are binary ops
+# TODO: make this a loops class, so that boolean ops are binary ops
+# TODO: make this a loops class, so that boolean ops are binary ops
+# TODO: make this a loops class, so that boolean ops are binary ops
+
+class loops:
     # TODO: lazy/refreshable interface??
 
     @property
     def N(self):
         """Compute the normal vector of self"""
-        N = vec3.O()
-        for u, v, w in slide(self.ps, 3):
-            uv, vw = (v - u), (w - v)
-            N.trn(uv.crs(vw))
-        assert not N.isO(), 'zero vector in loop.N ...'
-        return N.nrm()
+        N = []
+        for ps in self.loops:
+            N.append(loop_normal(ps))
+            #N.append(vec3.O())
+            #for u, v, w in slide(ps, 3):
+            #    uv, vw = (v - u), (w - v)
+            #    N[-1].trn(uv.crs(vw))
+            #assert not N[-1].isO(), 'zero vector in loop.N ...'
+        return vec3.sum(N).nrm()
 
-    @contextmanager
-    def orientation(self, N):
-        """For operations in a particular plane..."""
-        q = quat.toxy(self.N)
-        self.rot(q)
-        yield q.fp()
-        self.rot(q.fp())
+    def _toxy(self, *loops):
+        if self._q is None:
+            q = quat.toxy(self.N)
+            if not isnear(q.w, 0):
+                self.rot(q)
+                for loop in loops:
+                    q.rot(loop)
+            self._q = q
+        else:
+            q = self._q
+            for loop in loops:
+                q.rot(loop)
+        return self
+
+    def _fromxy(self, *loops):
+        if not self._q is None:
+            q = self._q.fp()
+            if not isnear(q.w, 0):
+                self.rot(q)
+                for loop in loops:
+                    q.rot(loop)
+            self._q = None
+        return self
 
     @property
     def area(self):
         """Compute the area contained by self"""
-        with self.orientation(vec3.Z()):
-            area = 0.0
-            for u, v in slide(self.ps, 2):
-                area -= (u.x + v.x) * (u.y - v.y) / 2.0
+        self._toxy()
+        area = 0.0
+        for ps in self.loops:
+            area += loop_area(ps)
+        for ps in self.holes:
+            area -= loop_area(ps)
+        self._fromxy()
         return area
+
+    def contains(self, p):
+        """Check if p is on the interior/boundary of self"""
+        self._toxy()
+        #with self.orientation(vec3.Z()) as q:
+        for loop in self.loops:
+            if p.inbxy(loop, True):
+                return True
+        self._fromxy()
+        return False
+
+    def plot(self, ax, **kws):
+        self._toxy()
+        #with self.orientation(vec3.Z()):
+        for ps in self.loops:
+            plot_loop(ax, ps, **kws)
+        for ps in self.holes:
+            kws['ls'] = kws.get('ls', '--')
+            plot_loop(ax, ps, **kws)
+        self._fromxy()
 
     #def containstri(self, a, b, c):
     #    # query
@@ -43,83 +91,204 @@ class loop:
 
     def triangulation(self, e=0.0001, h=None, r=10000):
         """Compute a delaunay triangulation of self"""
-        # query
-        with self.orientation(vec3.Z()) as q:
-            py = (self.ps, [h.ps for h in self.holes])
-            t = triangulation(py, e, h, r)
-            q.rot(t.points)
+        # TODO: handle loop hierarchy...
+        assert len(self.loops) == 1
+        self._toxy()
+        #with self.orientation(vec3.Z()) as q:
+        py = (self.loops[0], [h.ps for h in self.holes])
+        t = triangulation(py, e, h, r)
+        q.rot(t.points)
+        self._fromxy()
         return t
 
-    def __len__(self):
-        return self.len
+    def __init__(self, loops=(), holes=()):
+        self.loops = []
+        self.holes = []
+        for l in loops:
+            self.al(l)
+        for h in holes:
+            self.ah(h)
+        self._q = None
 
-    def __getitem__(self, i):
-        return self.ps[i]
+    def al(self, loop):
+        self.loops.append([p.quant() for p in loop])
 
-    def __iter__(self):
-        return self.ps.__iter__()
+    def ah(self, hole):
+        self.holes.append([p.quant() for p in hole])
 
-    def __init__(self, points, holes=None):
-        self.ps = points
-        self.len = len(self.ps)
-        self.holes = [] if holes is None else holes
+    def _findparent(self, hole, mode='strict'):
+        # must fit within exactly one parent contour
+        # without intersecting that parent contour
+        for c, l in enumerate(self.loops):
+            if all(p.inbxy(l, False) for p in hole):
+                parent = c
+                break
+        else:
+            return
+        for u, v in slide(self.loops[parent], 2):
+            for x, y in slide(hole, 2):
+                if sintsxyp(u, v, x, y):
+                    return None if mode == 'strict' else parent
+        return parent
+
+    def _strict_embed(self, hole):
+        # must not overlap/intersect any existent holes
+        for h in self.holes:
+            if any(p.inbxy(h, True) for p in hole):
+                return
+            for u, v in slide(h, 2):
+                for x, y in slide(hole, 2):
+                    if sintsxyp(u, v, x, y):
+                        return
+        '''
+        # must fit within exactly one parent contour
+        # without intersecting that parent contour
+        for c, l in enumerate(self.loops):
+            if all(p.inbxy(l, False) for p in hole):
+                parent = c
+                break
+        else:
+            return
+        for u, v in slide(self.loops[parent], 2):
+            for x, y in slide(hole, 2):
+                if sintsxyp(u, v, x, y):
+                    return
+        '''
+        parent = self._findparent(hole, mode='strict')
+        # this hole can be safely added
+        return hole if not parent is None else None
+
+    def _clip_embed(self, hole):
+        strict = self._strict_embed(hole)
+        if strict:
+            return strict
+
+        #print('clipped parent loop!')
+        #return
+        parent = self._findparent(hole, mode='clip')
+        if parent:
+
+            print('clip self to hole')
+            # check if it can be added non-strictly...
+            pcp = self.__class__((self.loops[parent], ))
+            hcp = self.__class__((hole, ))
+            pcp._q = self._q
+            hcp._q = self._q
+            reparent = pcp.difference(hcp, inplace=False)
+            unparent = self.loops.pop(parent)
+            for newparent in reparent:
+                self.loops.insert(parent, newparent)
+
+        #other = self.__class__((hole, ))
+        #cp = self.cp().difference(other, inplace=True)
+        #self.difference(other, inplace=True)
+        # clip self by hole
+        #print('probably an issue of orientation')
+
+    def embed(self, hole, mode='strict'):
+        """Smarter self.ah"""
+        hole = [p.quant() for p in hole]
+        self._toxy(hole)
+        if mode == 'strict':
+            hole = self._strict_embed(hole)
+        elif mode == 'clip':
+            hole = self._clip_embed(hole)
+        else:
+            raise
+        if hole:
+            self.ah(hole)
+            self._fromxy(hole)
+            return self
+
+    @classmethod
+    def from_polygon(cls, loop, holes=None):
+        if holes is not None:
+            holes = [cls(hole) for hole in holes]
+        return cls([loop], holes)
 
     def rot(self, q):
-        q.rot(self.ps)
-        for hole in self.holes:
-            hole.rot(q)
-        return self
-
-    def add(self, hole):
-        self.holes.append(hole)
+        for ps in self.loops:
+            q.rot(ps)
+        for ps in self.holes:
+            q.rot(ps)
         return self
 
     def cp(self):
-        points = [p.cp() for p in self.ps]
-        holes = [h.cp() for h in self.holes]
-        return self.__class__(points, holes=holes)
+        loops = [[p.cp() for p in ps] for ps in self.loops]
+        holes = [[p.cp() for p in ps] for ps in self.holes]
+        return self.__class__(loops, holes)
+
+    def lexico(self, key=(lambda t: (t[1].z, t[1].x, t[1].y))):
+        """Find the ordering of self.ps where the first two points
+        have the lowest z-values possible"""
+        # TODO: clean this up
+
+        raise
+
+        z = bbox(self.ps)[0].z
+        c = 0
+        for o, p in enumerate(self.ps):
+            if isnear(p.z, z):
+                if c:
+                    break
+                else:
+                    c += 1
+        o -= 1
+
+        # o is the first p in self.ps with minimal z coord
+
+        #o, _ = sorted(list(enumerate(self.ps)), key=key)[0]
+        return [p.cp() for p in (self.ps[o:] + self.ps[:o])]
 
     def fp(self):
-        self.ps.reverse()
-        for h in self.holes:
-            h.fp()
+        for ps in self.loops:
+            ps.reverse()
+        for ps in self.holes:
+            ps.reverse()
         return self
 
     def smooth(self, weight=0.5, iterations=1):
         """Smooth towards 1-ring neighbors in-place"""
         # TODO: handle holes
-        for j in range(iterations):
-            dps = []
-            for u, v, w in slide(self.ps, 3):
-                dp = (vec3.com((u, w)) - v) * weight
-                dps.append(dp)
-            dps.insert(0, dps.pop(-1))
-            for p, dp in zip(self.ps, dps):
-                p.trn(dp)
+        for ps in self.loops:
+            for j in range(iterations):
+                dps = []
+                for u, v, w in slide(ps, 3):
+                    dp = (vec3.com((u, w)) - v) * weight
+                    dps.append(dp)
+                dps.insert(0, dps.pop(-1))
+                for p, dp in zip(ps, dps):
+                    p.trn(dp)
         return self
 
     def edgesplit(self, maxlength):
         """Compute new loop where no edge exceeds maxlength"""
         # TODO: handle holes
-        points = []
-        for u, v in slide(self.ps, 2):
-            points.append(u.cp())
-            el = u.tov(v).mag()
-            if el > maxlength:
-                n = 1
-                while el / n > maxlength:
-                    n += 1
-                points.extend(u.line(v, n - 1))
-        return self.__class__(points)
+        loops = []
+        for ps in self.loops:
+            points = []
+            for u, v in slide(ps, 2):
+                points.append(u.cp())
+                el = u.tov(v).mag()
+                if el > maxlength:
+                    n = 1
+                    while el / n > maxlength:
+                        n += 1
+                    points.extend(u.line(v, n - 1))
+            loops.append(points)
+        return self.__class__(loops)
 
     def offset(self, r, closed=True, r0=10000):
         """Compute offset of self using distance r"""
         # TODO: handle holes
         # TODO: why support `closed` parameter?
         Z = vec3.Z()
-        with self.orientation(Z) as q:
+        self._toxy()
+        #with self.orientation(Z) as q:
+        offsets = []
+        for ps in self.loops:
             offset = []
-            for x, y, z in slide(self.ps, 3):
+            for x, y, z in slide(ps, 3):
                 a = (y - x).axy(z - y)
                 if isnear(a, 0, epsilon=0.01):
                     p = y + ((z - x).crs(Z).nrm() * -r)
@@ -146,58 +315,81 @@ class loop:
                 offset[ 0] = loop[ 0] + Z.crs(loop[ 1] - loop[ 0]).nrm() * r
                 offset[-1] = loop[-1] + Z.crs(loop[-1] - loop[-2]).nrm() * r
 
-        return self.__class__(offset).rot(q)
+            offsets.append(offset) #??
+
+        self._fromxy(*offsets)
+        return self.__class__(offsets)
 
     def union(self, other):
         """Find the union of two loops"""
         # TODO: handle holes
-        Z = vec3.Z()
-        with self.orientation(Z) as q, other.orientation(Z):
-            l1 = [p.quant() for p in self.cp()]
-            l2 = [p.quant() for p in other.cp()]
-            segs = list(slide(l1, 2)) + list(slide(l2, 2))
-            pg = planargraph(segs=segs)
-            part, _ = pg.polygon()
-        parts = [self.__class__(part).rot(q)]
-        return parts
+        assert len(self.holes) == 0
+        #Z = vec3.Z()
+        #with self.orientation(Z) as q, other.orientation(Z):
+        self._toxy()
+        other._toxy()
+        pg = planargraph(loops=(self.loops + other.loops))
+        loops = [[pg.vertices[i].cp() for i in l] for l in pg.loops()]
+        areas = [loop_area(l) for l in loops]
+        # each island yields exactly one loop of area < 0
+        parts = [l for l, a in zip(loops, areas) if (a < 0)]
+        # remove any part completely contained within another
+        bad = [False] * len(parts)
+        for i, u in enumerate(parts):
+            for j, v in enumerate(parts):
+                if not i == j:
+                    if all(p.inbxy(u, False) for p in v):
+                        bad[j] = True
+        parts = [p for p, b in zip(parts, bad) if not b]
+        self._fromxy(*parts)
+        other._fromxy()
+        return self.__class__(parts)#.rot(q)
 
     def intersect(self, other):
         """Find the intersection of two loops"""
         # TODO: handle holes
-        Z = vec3.Z()
-        with self.orientation(Z) as q, other.orientation(Z):
-            l1 = [p.quant() for p in self.cp()]
-            l2 = [p.quant() for p in other.cp()]
-            segs = list(slide(l1, 2)) + list(slide(l2, 2))
-            pg = planargraph(segs=segs)
-            _, iloops = pg.polygon()
-            parts = []
-            for loop in iloops:
-                for p in loop:
-                    if (p.inbxy(l1, True) and p.inbxy(l2, True)):
-                        continue
-                    else:
-                        break
+        assert len(self.holes) == 0
+        #Z = vec3.Z()
+        #with self.orientation(Z) as q, other.orientation(Z):
+        self._toxy()
+        other._toxy()
+        pg = planargraph(loops=(self.loops + other.loops))
+        _, iloops = pg.polygon()
+        parts = []
+        for loop in iloops:
+            for p in loop:
+                if self.contains(p) and other.contains(p):
+                    continue
                 else:
-                    parts.append(loop)
-        parts = [self.__class__(part).rot(q) for part in parts]
-        return parts
+                    break
+            else:
+                parts.append(loop)
+        self._fromxy(*parts)
+        other._fromxy()
+        return self.__class__(parts)#.rot(q)
 
-    def difference(self, other):
+    def difference(self, other, inplace=True):
         """Find the difference of two loops"""
         # TODO: handle holes
-        Z = vec3.Z()
-        with self.orientation(Z) as q, other.orientation(Z):
-            l1 = [p.quant() for p in self.cp()]
-            l2 = [p.quant() for p in other.cp()]
-            segs = list(slide(l1, 2)) + list(slide(l2, 2))
-            pg = planargraph(segs=segs)
-            _, iloops = pg.polygon()
-            parts = []
-            for loop in iloops:
-                for p in loop:
-                    if not p.inbxy(l2, True):
-                        parts.append(loop)
-                        break
-        parts = [self.__class__(part).rot(q) for part in parts]
-        return parts
+        assert len(self.holes) == 0
+        #Z = vec3.Z()
+        #with self.orientation(Z) as q, other.orientation(Z):
+        self._toxy()
+        other._toxy()
+        pg = planargraph(loops=(self.loops + other.loops))
+        _, iloops = pg.polygon()
+        parts = []
+        for loop in iloops:
+            for p in loop:
+                if not other.contains(p):
+                    parts.append(loop)
+                    break
+        self._fromxy(*parts)
+        other._fromxy()
+        if inplace:
+            self.loops = []
+            for part in parts:
+                self.al(part)
+            return self#.rot(q)
+        else:
+            return self.__class__(parts)#.rot(q)
