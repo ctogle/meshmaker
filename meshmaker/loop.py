@@ -8,13 +8,7 @@ import numpy as np
 from contextlib import contextmanager
 
 
-# TODO: make this a loops class, so that boolean ops are binary ops
-# TODO: make this a loops class, so that boolean ops are binary ops
-# TODO: make this a loops class, so that boolean ops are binary ops
-# TODO: make this a loops class, so that boolean ops are binary ops
-
 class loops:
-    # TODO: lazy/refreshable interface??
 
     @property
     def N(self):
@@ -39,8 +33,9 @@ class loops:
             self._q = q
         else:
             q = self._q
-            for loop in loops:
-                q.rot(loop)
+            if not isnear(q.w, 0):
+                for loop in loops:
+                    q.rot(loop)
         return self
 
     def _fromxy(self, *loops):
@@ -68,33 +63,28 @@ class loops:
     def contains(self, p):
         """Check if p is on the interior/boundary of self"""
         self._toxy()
-        #with self.orientation(vec3.Z()) as q:
         for loop in self.loops:
             if p.inbxy(loop, True):
                 return True
         self._fromxy()
         return False
 
-    def plot(self, ax, **kws):
-        self._toxy()
-        #with self.orientation(vec3.Z()):
+    def plot(self, ax, toxy=True, **kws):
+        if toxy:
+            self._toxy()
         for ps in self.loops:
             plot_loop(ax, ps, **kws)
         for ps in self.holes:
             kws['ls'] = kws.get('ls', '--')
             plot_loop(ax, ps, **kws)
-        self._fromxy()
-
-    #def containstri(self, a, b, c):
-    #    # query
-    #    raise
+        if toxy:
+            self._fromxy()
 
     def triangulation(self, e=0.0001, h=None, r=10000):
         """Compute a delaunay triangulation of self"""
         # TODO: handle loop hierarchy...
         assert len(self.loops) == 1
         self._toxy()
-        #with self.orientation(vec3.Z()) as q:
         py = (self.loops[0], [h.ps for h in self.holes])
         t = triangulation(py, e, h, r)
         q.rot(t.points)
@@ -120,7 +110,8 @@ class loops:
         # must fit within exactly one parent contour
         # without intersecting that parent contour
         for c, l in enumerate(self.loops):
-            if all(p.inbxy(l, False) for p in hole):
+            #if all(p.inbxy(l, False) for p in hole):
+            if any(p.inbxy(l, False) for p in hole):
                 parent = c
                 break
         else:
@@ -140,65 +131,54 @@ class loops:
                 for x, y in slide(hole, 2):
                     if sintsxyp(u, v, x, y):
                         return
-        '''
-        # must fit within exactly one parent contour
-        # without intersecting that parent contour
-        for c, l in enumerate(self.loops):
-            if all(p.inbxy(l, False) for p in hole):
-                parent = c
-                break
-        else:
-            return
-        for u, v in slide(self.loops[parent], 2):
-            for x, y in slide(hole, 2):
-                if sintsxyp(u, v, x, y):
-                    return
-        '''
         parent = self._findparent(hole, mode='strict')
         # this hole can be safely added
-        return hole if not parent is None else None
+        if parent is not None:
+            self.ah(hole)
+            return True
+        return False
 
     def _clip_embed(self, hole):
-        strict = self._strict_embed(hole)
-        if strict:
-            return strict
+        strictly_embedded = self._strict_embed(hole)
+        if not strictly_embedded:
+            parent = self._findparent(hole, mode='clip')
+            if parent is not None:
 
-        #print('clipped parent loop!')
-        #return
-        parent = self._findparent(hole, mode='clip')
-        if parent:
+                print('clip self to hole')
+                #print(self.loops[parent])
+                #print(hole)
 
-            print('clip self to hole')
-            # check if it can be added non-strictly...
-            pcp = self.__class__((self.loops[parent], ))
-            hcp = self.__class__((hole, ))
-            pcp._q = self._q
-            hcp._q = self._q
-            reparent = pcp.difference(hcp, inplace=False)
-            unparent = self.loops.pop(parent)
-            for newparent in reparent:
-                self.loops.insert(parent, newparent)
+                # check if it can be added non-strictly...
+                pcp = self.__class__((self.loops[parent], ))
+                hcp = self.__class__((hole, ))
+                #qO = quat.O()
+                #pcp._q = qO
+                #hcp._q = qO
+                #pcp._q = self._q
+                #hcp._q = self._q
+                reparent = pcp.difference(hcp, inplace=False)
+                unparent = self.loops.pop(parent)
+                # these new loops end up in the xy plane regardless of
+                # orientation pre-op
+                for newparent in reparent.loops:
+                    self.loops.insert(parent, newparent)
 
-        #other = self.__class__((hole, ))
-        #cp = self.cp().difference(other, inplace=True)
-        #self.difference(other, inplace=True)
-        # clip self by hole
-        #print('probably an issue of orientation')
+                return True
+
+        return False
 
     def embed(self, hole, mode='strict'):
         """Smarter self.ah"""
         hole = [p.quant() for p in hole]
         self._toxy(hole)
         if mode == 'strict':
-            hole = self._strict_embed(hole)
+            embedded = self._strict_embed(hole)
         elif mode == 'clip':
-            hole = self._clip_embed(hole)
+            embedded = self._clip_embed(hole)
         else:
             raise
-        if hole:
-            self.ah(hole)
-            self._fromxy(hole)
-            return self
+        self._fromxy()
+        return self
 
     @classmethod
     def from_polygon(cls, loop, holes=None):
@@ -324,8 +304,6 @@ class loops:
         """Find the union of two loops"""
         # TODO: handle holes
         assert len(self.holes) == 0
-        #Z = vec3.Z()
-        #with self.orientation(Z) as q, other.orientation(Z):
         self._toxy()
         other._toxy()
         pg = planargraph(loops=(self.loops + other.loops))
@@ -349,8 +327,6 @@ class loops:
         """Find the intersection of two loops"""
         # TODO: handle holes
         assert len(self.holes) == 0
-        #Z = vec3.Z()
-        #with self.orientation(Z) as q, other.orientation(Z):
         self._toxy()
         other._toxy()
         pg = planargraph(loops=(self.loops + other.loops))
@@ -372,8 +348,6 @@ class loops:
         """Find the difference of two loops"""
         # TODO: handle holes
         assert len(self.holes) == 0
-        #Z = vec3.Z()
-        #with self.orientation(Z) as q, other.orientation(Z):
         self._toxy()
         other._toxy()
         pg = planargraph(loops=(self.loops + other.loops))
