@@ -25,12 +25,14 @@ class loops:
 
     def _toxy(self, *loops):
         if self._q is None:
-            q = quat.toxy(self.N)
-            if not isnear(q.w, 0):
-                self.rot(q)
-                for loop in loops:
-                    q.rot(loop)
-            self._q = q
+            N = self.N
+            if N.dot(N) > 0:
+                q = quat.toxy(N)
+                if not isnear(q.w, 0):
+                    self.rot(q)
+                    for loop in loops:
+                        q.rot(loop)
+                self._q = q
         else:
             q = self._q
             if not isnear(q.w, 0):
@@ -109,9 +111,10 @@ class loops:
     def _findparent(self, hole, mode='strict'):
         # must fit within exactly one parent contour
         # without intersecting that parent contour
+        onb = not mode == 'strict'
         for c, l in enumerate(self.loops):
             #if all(p.inbxy(l, False) for p in hole):
-            if any(p.inbxy(l, False) for p in hole):
+            if any(p.inbxy(l, onb) for p in hole):
                 parent = c
                 break
         else:
@@ -178,12 +181,13 @@ class loops:
         else:
             raise
         self._fromxy()
-        return self
+        #return self
+        return embedded
 
     @classmethod
     def from_polygon(cls, loop, holes=None):
-        if holes is not None:
-            holes = [cls(hole) for hole in holes]
+        #if holes is not None:
+        #    holes = [cls(hole) for hole in holes]
         return cls([loop], holes)
 
     def rot(self, q):
@@ -264,7 +268,6 @@ class loops:
         # TODO: why support `closed` parameter?
         Z = vec3.Z()
         self._toxy()
-        #with self.orientation(Z) as q:
         offsets = []
         for ps in self.loops:
             offset = []

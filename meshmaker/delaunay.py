@@ -274,6 +274,7 @@ class triangulation:
         else:
             print(self.points[nv], p, self.points[nv].d(p))
             raise ValueError('point already located!')
+            #print('point already located!')
 
     def containstri(self, loop, a, b, c):
         if not (a.inbxy(loop) or a.onbxy(loop, ie=True)):
