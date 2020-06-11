@@ -363,8 +363,8 @@ class Window(Base):
         #gl2.glBlendFunc(GL.GL_SRC_ALPHA, GL.GL_ONE_MINUS_SRC_ALPHA);
 
         if not hasattr(self, 'programs'):
-            #self.programs = [MainShader(), EdgeShader()]
-            self.programs = [MainShader(), WireShader()]
+            self.programs = [MainShader(), EdgeShader()]
+            #self.programs = [MainShader(), WireShader()]
 
         self.shaderkeys = {}
         for i, program in enumerate(self.programs):

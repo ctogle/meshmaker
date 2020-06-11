@@ -79,7 +79,8 @@ class Mesh(Base):
                 pass
             else:
                 print(len(ps), ps)
-                raise NotImplementedError
+                #raise NotImplementedError
+                continue
             for p, n, u in zip(ps, ns, us):
                 data.extend([u.x, u.y, n.x, n.y, n.z, p.x, p.y, p.z])
 
