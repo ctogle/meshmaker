@@ -1,7 +1,7 @@
 import numpy as np
 from meshmaker.vec3 import vec3
 from meshmaker.quat import quat
-from meshmaker.tform import tform
+from meshmaker.tform import TForm
 from meshmaker.img import perlin, proximal, normalize
 from meshmaker.geometry import slide, isnear
 
@@ -104,7 +104,7 @@ class height_field(image_field):
     def wtoi(origin, radius, resolution):
         dp = origin.tov(vec3(resolution / 2, resolution / 2, 0))
         ds = vec3(resolution / (2 * radius), resolution / (2 * radius), 1)
-        tf = tform(dp, None, ds)
+        tf = TForm(dp, None, ds)
         return tf
 
 

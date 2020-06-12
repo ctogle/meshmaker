@@ -3,13 +3,8 @@ from meshmaker.mesh import Mesh
 from meshmaker.tform import TForm
 from meshmaker.vec3 import vec3
 from meshmaker.quat import quat
-from meshmaker.mgl import show, MainShader, EdgeShader
-from functools import partial
+from meshmaker.mgl import show
 import numpy as np
-
-# create a simpler calling method to show things via OpenGL
-shaders = [MainShader(), EdgeShader()]
-show = partial(show, programs=shaders, background=vec3.U(0.5))
 
 # make a cube and some copies
 a = Mesh.cube_mesh(r=1)

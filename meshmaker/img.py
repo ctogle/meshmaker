@@ -4,7 +4,7 @@ import cv2
 from skimage import filters, segmentation
 from skimage.measure import label, regionprops
 from meshmaker.vec3 import vec3
-from meshmaker.tform import tform
+from meshmaker.tform import TForm
 
 
 def steepness(img):

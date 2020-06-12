@@ -137,6 +137,30 @@ class Mesh(Base):
             face.reverse()
         return self
 
+    def subdivide(self):
+        """Create a subdivided mesh from self (currently only splits triangles)"""
+        new = self.__class__()
+        new.vertices = self.vertices[:]
+        min_index = len(self.vertices)
+        midpoints = {}
+        for i, j in self.e2f:
+            if (j, i) in midpoints:
+                midpoints[(i, j)] = midpoints[(j, i)]
+            else:
+                midpoint = new.vertices[i].lerp(new.vertices[j], 0.5)
+                midpoints[(i, j)] = new.av(midpoint, e=None, min_index=min_index)
+        for f, face in self:
+            if len(face) == 3:
+                u, v, w = face
+                p, q, r = midpoints[(u, v)], midpoints[(v, w)], midpoints[(w, u)]
+                new.af([p, q, r])
+                new.af([u, p, r])
+                new.af([v, q, p])
+                new.af([w, r, q])
+            else:
+                new.af(face)
+        return new
+
     @classmethod
     def from_bsp(cls, bsp):
         mesh = cls()
@@ -280,6 +304,14 @@ class Mesh(Base):
                     self.unwrap_uvs(adj, O, X.cp().rot(q), Y.cp().rot(q), S, seams, uvs)
         return uvs
 
+    def project_uvs_xy(self, s=1.0):
+        """Get trivial vertex UVs using xy projection of vertices"""
+        S = vec3.U(s)
+        uvs = {}
+        for f, face in self:
+            uvs[f] = [self.vertices[v].xy() * S for v in face]
+        return uvs
+
     def angle_seams(self, alpha=(np.pi / 2)):
         """Find the set of edges joining faces with normals
         differing in angle by alpha or more radians"""
@@ -329,18 +361,20 @@ class Mesh(Base):
                 groups[i].append(i)
         raise NotImplementedError(f'{groups}')
 
-    def _fp(self, p, e=0.00001):
+    def _fp(self, p, e=0.00001, min_index=0):
         """Find vertex in neighborhood of p if one exists"""
         for i, o in enumerate(self.vertices):
+            if i < min_index:
+                continue
             if p.isnear(o, e):
                 return i
 
-    def av(self, p, e=None):
+    def av(self, p, e=0.00001, min_index=0):
         """Add vertex to the mesh without connectivity"""
 
-        e = 0.00001 ###
+        #e = 0.00001 ###
 
-        v = None if e is None else self._fp(p, e)
+        v = None if e is None else self._fp(p, e, min_index)
         if v is None:
             v = len(self.vertices)
             self.vertices.append(p)
