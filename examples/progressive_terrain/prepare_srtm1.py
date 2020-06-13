@@ -20,7 +20,7 @@ def hgt_to_png(path):
         cv2.imwrite(path.replace('hgt', 'png'), hgt)
 
 
-def download_srtm1_region01(path, min_lat, max_lat, min_lon, max_lon):
+def download_srtm1_region01(path, min_lat=38, max_lat=49, min_lon=112, max_lon=124):
     os.makedirs(path, exist_ok=True)
     n_chunks = ((max_lon - min_lon) * (max_lat - min_lat))
     with tqdm.tqdm(total=n_chunks, desc='Downloading/extracting SRTM1...') as pbar:
@@ -48,11 +48,11 @@ if __name__ == '__main__':
                         help='Where to put all data')
     parser.add_argument('--min_lat', type=int, default=38,
                         help='Minimum latitude to prepare')
-    parser.add_argument('--max_lat', type=int, default=49,
+    parser.add_argument('--max_lat', type=int, default=38,
                         help='Maximum latitude to prepare')
     parser.add_argument('--min_lon', type=int, default=112,
                         help='Minimum longitude to prepare')
-    parser.add_argument('--max_lon', type=int, default=124,
+    parser.add_argument('--max_lon', type=int, default=112,
                         help='Maximum longitude to prepare')
     args = parser.parse_args()
 
