@@ -1,0 +1,11 @@
+moderngl
+moderngl-window
+matplotlib
+numpy
+tqdm
+wget
+noise
+pyrr
+scikit-image
+opencv-python
+Pillow
