@@ -104,7 +104,8 @@ if __name__ == '__main__':
 
     height = cv2.imread(args.png, cv2.IMREAD_GRAYSCALE)
     height = height / height.max()
-    height = height[400:600, 400:600]
+    #height = height[400:600, 400:600]
+    height = height[600:1000, 200:600]
 
     f, ax = plot()
     im = ax.imshow(height, origin='lower')
