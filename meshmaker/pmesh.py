@@ -41,6 +41,7 @@ class ParamMesh(Base):
             key.J: self.on_j, key.K: self.on_k,
         }
 
+    # methods for modifying control meshes
     def on_toggle(self, *ags):
         self.showcontrol = not self.showcontrol
     def on_cycle(self, *ags):
@@ -59,6 +60,13 @@ class ParamMesh(Base):
         vec3(1, 1, 2).sclps(self.control.vertices)
 
     def scene(self):
+        """Can be rendered as the control mesh or its parameterization.
+
+        Parameterization is stored in list of tuples self.features, where
+        entry (f, target) refers to a function `f` and some target geometry
+        `target`, associated with the control mesh - f must receive the mesh
+        and target and return a TForm (i.e. node in a scenegraph).
+        """
         if self.showcontrol:
             s = self.selected[0]
             sface = self.control.faces[s]
@@ -118,11 +126,11 @@ class MetaMesh(ParamMesh):
             if self.control.meta.get(f, None) is None:
                 self.control.meta[f] = generic
 
-    @classmethod
-    def prism(cls, loop, depth):
-        """Loop is the projection of the extruded loop in the symmetry plane
-        of the resulting solid, which is a prism by construction"""
-        return cls(Mesh.prism(loop, depth))
+    #@classmethod
+    #def prism(cls, loop, depth):
+    #    """Loop is the projection of the extruded loop in the symmetry plane
+    #    of the resulting solid, which is a prism by construction"""
+    #    return cls(Mesh.prism(loop, depth))
 
     def __init__(self, control, **kws):
         super().__init__(control, **kws)
@@ -131,7 +139,9 @@ class MetaMesh(ParamMesh):
 
 
 class MetaScene(Base):
-    """Hierarchy of MetaMeshes"""
+    """Hierarchy of MetaMeshes - Allows rebuilding a scene using reference
+    to scenegraph (TForm root) where each node may have `metas` attribute,
+    a list of MetaMesh instances"""
 
     def __init__(self, root, **kws):
         super().__init__(root=root, **kws)
@@ -146,6 +156,7 @@ class MetaScene(Base):
             key.K: self.on_K,
         }
 
+    # methods which modify the entire scenegraph
     def on_C(self, key, action, modifiers):
         self.showcontrols = not self.showcontrols
     def on_I(self, key, action, modifiers):
@@ -171,9 +182,11 @@ class MetaScene(Base):
             self.root.translate(z)
 
     def build(self, cf):
+        """Recursively build a scene by calling `scene` method of each
+        MetaMesh instance found in the scenegraph at/below node `cf`"""
         tf = TForm.from_mat44(cf.transformation,
                               models=getattr(cf, 'models', []))
-        if hasattr(cf, 'metas'):
+        if getattr(cf, 'metas', None) is not None:
             for meta in cf.metas:
                 meta.showcontrol = self.showcontrols
                 tf.add(meta.scene())
@@ -182,4 +195,5 @@ class MetaScene(Base):
         return tf
 
     def scene(self):
+        """Recursively rebuild the scene from the root scenegraph node"""
         return self.build(self.root)

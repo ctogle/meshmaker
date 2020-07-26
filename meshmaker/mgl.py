@@ -368,6 +368,7 @@ class Window(Base):
 
         self.shaderkeys = {}
         for i, program in enumerate(self.programs):
+            print(f'Building Shader {i+1}:{program}')
             program.build(self.ctx).init()
             key = getattr(self.wnd.keys, f'F{i + 1}')
             self.shaderkeys[key] = self.toggleshader(program)

@@ -47,7 +47,7 @@ class TForm(Base):
         return cls(models=[Model(meshes={texture: list(meshes)})], **kws)
 
     def __init__(self, t=None, q=None, s=None,
-                 parent=None, children=None, **kws):
+                 parent=None, children=None, metas=None, **kws):
         super().__init__(**kws)
         self.transformation = mat44.tform(t, q, s)
 
@@ -58,6 +58,7 @@ class TForm(Base):
         if children is not None:
             for child in children:
                 self.add(child)
+        self.metas = metas
 
     def cp(self):
         cp = TForm()
@@ -74,3 +75,10 @@ class TForm(Base):
         if not child in self.children:
             self.children.append(child)
         return child
+
+    def addmeta(self, meta):
+        """Add a MetaMesh instance to self.metas (maybe initialize self.metas)"""
+        if self.metas is None:
+            self.metas = []
+        self.metas.append(meta)
+        return self

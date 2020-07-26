@@ -192,7 +192,7 @@ class planargraph:
                 if w is not None:
                     if (not (w.isnear(u, e) or w.isnear(v, e))) and w.insxy(u, v, e):
                         return self.ae(i, k, e), self.ae(k, j, e)
-            # 
+            #
             ips, ies = [], []
             for n, m in self.edge_lookup:
                 p, q = self.vertices[n], self.vertices[m]
@@ -265,7 +265,26 @@ class planargraph:
                 self.rv(i)
             return self.destem()
 
-    def dissolve(self):
+    def dissolve(self, e=0.0001):
+        """Absorb vertices with valence <=2 with
+        nearby vertices with valence >2"""
+        marked = defaultdict(list)
+        for i, u in enumerate(self.vertices):
+            if len(self.rings[i]) > 2:
+                for j in self.rings[i]:
+                    if not i == j:
+                        if len(self.rings[j]) <= 2:
+                            if u.d(self.vertices[j]) < e:
+                                marked[i].append(j)
+        for i in marked:
+            for j in marked[i]:
+                for k in self.rings[j]:
+                    if not i == k:
+                        self.ne(i, k)
+                self.rv(j)
+        return self
+
+        ''' old version?
         for i, v in enumerate(self.vertices):
             if v is not None:
                 if len(self.rings[i]) == 2:
@@ -275,6 +294,7 @@ class planargraph:
                     if isnear(ccw, 0):
                         self.rv(i)
                         self.ae(j, k)
+        '''
 
     def minlen(self, epsilon=None):
         """"""

@@ -8,7 +8,7 @@ import numpy as np
 from contextlib import contextmanager
 
 
-class loops:
+class Loops:
 
     @property
     def N(self):

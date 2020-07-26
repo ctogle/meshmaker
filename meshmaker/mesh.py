@@ -106,6 +106,31 @@ class Mesh(Base):
         return mesh
 
     @classmethod
+    def cube_mesh2(cls, r=1, meta='generic_0'):
+        mesh = cls()
+        bottom = [vec3(-r,-r,-r), vec3( r,-r,-r), vec3( r, r,-r), vec3(-r, r,-r)]
+        top    = [vec3(-r,-r, r), vec3( r,-r, r), vec3( r, r, r), vec3(-r, r, r)]
+        mesh.fan(vec3.com(bottom), bottom[::-1], meta=meta)
+        mesh.fan(vec3.com(top), top, meta=meta)
+        for (u, v), (x, y) in zip(slide(bottom, 2), slide(top, 2)):
+            loop = [u, v, y, x]
+            mesh.fan(vec3.com(loop), loop, meta=meta)
+        return mesh
+
+    @classmethod
+    def cylinder_mesh(cls, h=1, r=1, n=8, closed=False, meta='generic_0'):
+        mesh = cls()
+        a = vec3.O()
+        b = a.ring(r, n)
+        c = a + vec3.Z(h)
+        d = c.ring(r, n)
+        mesh.bridge(b, d, meta=meta)
+        if closed:
+            mesh.fan(a, b[::-1], meta=meta)
+            mesh.fan(c, d, meta=meta)
+        return mesh
+
+    @classmethod
     def prism(cls, loop, depth, x_align=1.0):
         """Loop is the projection of the extruded loop in the symmetry plane
         of the resulting solid, which is a prism by construction"""
@@ -138,7 +163,7 @@ class Mesh(Base):
         return self
 
     def subdivide(self):
-        """Create a subdivided mesh from self (currently only splits triangles)"""
+        """Create a subdivided mesh from self (currently only splits tris/quads)"""
         new = self.__class__()
         new.vertices = self.vertices[:]
         min_index = len(self.vertices)
@@ -157,6 +182,17 @@ class Mesh(Base):
                 new.af([u, p, r])
                 new.af([v, q, p])
                 new.af([w, r, q])
+            elif len(face) == 4:
+                u, v, w, x = face
+                p, q, r, s = (midpoints[(u, v)], midpoints[(v, w)],
+                              midpoints[(w, x)], midpoints[(x, u)])
+                c = vec3.com((new.vertices[u], new.vertices[v],
+                              new.vertices[w], new.vertices[x]))
+                c = new.av(c, e=None, min_index=min_index)
+                new.af([u, p, c, s])
+                new.af([p, v, q, c])
+                new.af([c, q, w, r])
+                new.af([s, c, r, x])
             else:
                 new.af(face)
         return new
@@ -189,6 +225,70 @@ class Mesh(Base):
         """Split via a plane"""
         u, v = BSP.from_mesh(self).split(O, N)
         return self.__class__.from_bsp(u), self.__class__.from_bsp(v)
+
+    def laplacian(self):
+        """Compute a laplacian matrix for self"""
+        N = len(self.vertices)
+        W = np.zeros((N, N))
+        for i, j in self.e2f:
+            W[i, j] = 1
+        L = np.eye(N)
+        for i, j in self.e2f:
+            L[i, j] = -W[i, j] / W[i, :].sum()
+        return L
+
+    def to_xyz(self):
+        """Return a vertices/faces representation"""
+        xyz = np.array([[p.x, p.y, p.z] for p in self.vertices])
+        faces = list(self)
+        return xyz, faces
+
+    @classmethod
+    def from_xyz(cls, xyz, faces):
+        """Create Mesh from vertices/faces
+
+        Args:
+            xyz (iterable): Iterable of (x, y, z) tuples
+            faces (iterable): Iterable of (index, face) tuples
+
+        """
+        mesh = cls()
+        mapping = {}
+        for i, (x, y, z) in enumerate(xyz):
+            mapping[i] = mesh.av(vec3(x, y, z))
+        for f, face in faces:
+            face = [mapping[v] for v in face]
+            mesh.af(face)
+        return mesh
+
+    def smooth(self):
+        """Create new Mesh with smoothing applied"""
+        L = self.laplacian()
+        xyz, faces = self.to_xyz()
+        return self.from_xyz(xyz - np.matmul(L, xyz), faces)
+
+    def deform(self, constraints):
+        """Create deformation Mesh via constraints
+
+        Args:
+            constraints (dict): Dictionary mapping vertex
+            index to constrained location after deformation
+
+        Returns:
+            New and deformed Mesh instance
+
+        """
+        # convert mesh to laplacian coordinates
+        (xyz, faces), L = self.to_xyz(), self.laplacian()
+        delta = np.matmul(L, xyz)
+        # apply constraints on L/delta
+        I = np.eye(len(self.vertices))
+        for j, anchor in constraints.items():
+            L[j, :] = I[j]
+            delta[j, :] = (anchor.x, anchor.y, anchor.z)
+        # recover cartesian coordinates from laplacian coordinates
+        xyz, _, _, _ = np.linalg.lstsq(L, delta)
+        return self.__class__.from_xyz(xyz, faces)
 
     def __init__(self):
         self.vertices = []
@@ -224,6 +324,13 @@ class Mesh(Base):
         if getattr(self, '_face_tangents', None) is None:
             self._face_tangents = FaceTangents(self)
         return self._face_tangents
+
+    def vertex_rings(self):
+        v2v = defaultdict(set)
+        for i, j in self.e2f:
+            v2v[i].add(j)
+            v2v[j].add(i)
+        return v2v
 
     def vertex_normals(self, smooth=False):
         """Generate vertex normal vector lookup with optional smoothing"""
@@ -369,6 +476,16 @@ class Mesh(Base):
             if p.isnear(o, e):
                 return i
 
+    def nearest(self, p):
+        """Find vertex which is nearest to p"""
+        nearest = None
+        for i, o in enumerate(self.vertices):
+            op = o.d(p)
+            if nearest is None or op < nearest[1]:
+                nearest = i, op
+        if nearest is not None:
+            return nearest[0]
+
     def av(self, p, e=0.00001, min_index=0):
         """Add vertex to the mesh without connectivity"""
 
@@ -419,11 +536,11 @@ class Mesh(Base):
         q.rot(t.points)
         return [self.af(tri, e=e, **kws) for tri in t.simplices()]
 
-    def fan(self, center, rim, e=0.00001):
+    def fan(self, center, rim, e=0.00001, **kws):
         """Add triangles on surface of cone"""
         new_faces = []
         for u, v in slide(rim, 2, 0):
-            new_faces.append(self.af((center, u, v), e=e))
+            new_faces.append(self.af([center, u, v], e=e, **kws))
         return new_faces
 
     def bridge(self, left, right, m=0, e=0.00001, **kws):
@@ -434,7 +551,13 @@ class Mesh(Base):
             right = [self.av(p, e=e) for p in right]
         new_faces = []
         for (a, b), (c, d) in zip(slide(left, 2, m), slide(right, 2, m)):
+
             new_faces.append(self.af([a, b, d, c], e=e, **kws))
+
+            #fan = [a, b, d, c]
+            #com = self.av(vec3.com([self.vertices[x] for x in fan]), e=e)
+            #new_faces.append(self.fan(com, fan, e=e, **kws))
+
         return new_faces
 
     def bridges(self, loops, m=0, n=0, e=0.00001, **kws):

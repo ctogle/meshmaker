@@ -256,6 +256,9 @@ class vec3:
         return line
 
     def spline(self, o, st, ot, n, alpha=0.5):
+        s = self.d(o) / n
+        st.scl(s)
+        ot.scl(s)
         #n += 1
         n -= 1
         ps = [self, self + st, o + ot, o]

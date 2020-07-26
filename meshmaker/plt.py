@@ -1,8 +1,8 @@
 import matplotlib.pyplot as plt
 
 
-def plot(i=1, j=1, figsize=(8, 8)):
-    f, ax = plt.subplots(i, j, figsize=figsize, dpi=100)
+def plot(i=1, j=1, figsize=(8, 8), **kws):
+    f, ax = plt.subplots(i, j, figsize=figsize, dpi=100, **kws)
     return f, ax
 
 

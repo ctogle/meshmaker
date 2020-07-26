@@ -273,8 +273,8 @@ class triangulation:
             raise ValueError('failed to locate point!')
         else:
             print(self.points[nv], p, self.points[nv].d(p))
-            raise ValueError('point already located!')
-            #print('point already located!')
+            #raise ValueError('point already located!')
+            print('point already located!')
 
     def containstri(self, loop, a, b, c):
         if not (a.inbxy(loop) or a.onbxy(loop, ie=True)):
@@ -394,14 +394,86 @@ class triangulation:
         self.addtriangle(y, x, u)
         return (y, v), (v, x), (x, u), (u, y)
 
-    def constrain(self):
-        """force all input domain edges into the triangulation"""
+    def missingedges(self):
+        """Find edges from the input polygon which are not covered"""
         unfin = []
         for p, q in self.edges:
             u = self._fp(p, e=self.epsilon)
             v = self._fp(q, e=self.epsilon)
             if self.trianglelookup.get((u, v)) is None:
                 unfin.append((u, v))
+        return unfin
+
+    def constrain(self):
+        """force all input domain edges into the triangulation"""
+
+        for u, v in self.missingedges():
+            # find all edges which intersect missing edge uv
+            p, q = self.points[u], self.points[v]
+            badedges = []
+            for x, y, z in filter(None, self.triangles):
+                a, b, c = self.points[x], self.points[y], self.points[z]
+                if sintsxyp(p, q, a, b, 0, 0, 0, 1):
+                    badedges.append((x, y))
+                elif sintsxyp(p, q, b, c, 0, 0, 0, 1):
+                    badedges.append((y, z))
+                elif sintsxyp(p, q, c, a, 0, 0, 0, 1):
+                    badedges.append((z, x))
+
+            # if there are exactly 2, only an edge flip is required (?)
+            if len(badedges) == 2:
+                self.flipedge(*bad[0])
+                return
+
+            # given a list of edges which intersect the edge uv
+            # produce a left and right loop wrt edge uv
+            p, q = self.points[u], self.points[v]
+            T = (q - p)
+            left, right = set([v]), set([u])
+            for x, y in badedges:
+                z = self.adjacent(x, y)
+                a, b, c = self.points[x], self.points[y], self.points[z]
+                (left if (orient2d(p, q, a) > 0) else right).add(x)
+                (left if (orient2d(p, q, b) > 0) else right).add(y)
+                (left if (orient2d(p, q, c) > 0) else right).add(z)
+
+            # make sure each list ends with how the other began
+            if not u in left:
+                left.add(u)
+            if not v in right:
+                right.add(v)
+
+            # sort points along tangent of UV to retriangulate with fan
+            # should sort by angle from edge UV instead?
+            sort = lambda r: (self.points[r].dot(T) - p.dot(T))
+            left = sorted(left, key=sort, reverse=False)
+            right = sorted(right, key=sort, reverse=False)
+
+            #print('-' * 50)
+            #print(u, v)
+            #print(left)
+            #print(right)
+            #print('-' * 50)
+
+            # delete the triangles associated with the bad edges
+            for x, y in badedges:
+                z = self.adjacent(x, y)
+                self.deletetriangle(x, y, z)
+
+            # add the triangles from a fan of left and right loops
+            for i in range(2, len(left)):
+                self.addtriangle(left[0], left[i - 1], left[i])
+            for i in range(2, len(right)):
+                self.addtriangle(right[0], right[i - 1], right[i])
+
+        '''
+        unfin = []
+        for p, q in self.edges:
+            u = self._fp(p, e=self.epsilon)
+            v = self._fp(q, e=self.epsilon)
+            if self.trianglelookup.get((u, v)) is None:
+                unfin.append((u, v))
+        print('unfin', len(unfin))
         while unfin:
             u, v = unfin.pop(0)
             if self.trianglelookup.get((u, v)) is None:
@@ -423,6 +495,7 @@ class triangulation:
                     w = self._fp(r, e=self.epsilon)
                     unfin.append((u, w))
                     unfin.append((w, v))
+        '''
 
     def delaunay(self):
         """ensure triangulation is delaunay via edge flips"""
