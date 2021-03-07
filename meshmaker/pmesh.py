@@ -138,6 +138,19 @@ class MetaMesh(ParamMesh):
         self.features = self.metafeatures(**kws)
 
 
+class WireMesh(MetaMesh):
+    """Convenient MetaMesh subclass for visualizing just the edges"""
+
+    def scene(self):
+        wires = []
+        for i, j in self.control.e2f:
+            u, v = self.control.vertices[i], self.control.vertices[j]
+            wires.append((u, v))
+        mesh = Mesh()
+        mesh.wires = lambda tf: [tf.transform(wire) for wire in wires]
+        return TForm.from_meshes(mesh)
+
+
 class MetaScene(Base):
     """Hierarchy of MetaMeshes - Allows rebuilding a scene using reference
     to scenegraph (TForm root) where each node may have `metas` attribute,

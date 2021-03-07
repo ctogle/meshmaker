@@ -1,12 +1,105 @@
 from .vec3 import vec3
+from .seam import Seam
 from .tform import TForm
 from .model import Model
 from .mesh import Mesh
 from .pmesh import MetaMesh
-from .geometry import near, slide
+from .geometry import near, isnear, slide, loop_normal
 import numpy as np
 
 
+class Stairs(MetaMesh):
+
+    def steps(self, lb, rb):
+        h = lb[1].d(lb[0])
+        z = lb[1].z - lb[0].z
+        t = np.arccos(z / h)
+        steps = Mesh()
+        steps.uvs = {}
+        for (aa, bb), (cc, dd) in slide(list(zip(lb, rb)), 2, 1):
+            dX = vec3.Z().crs(bb - aa).nrm() * (h * np.sin(t))
+            dZ = vec3.Z(lb[1].z - lb[0].z)
+            assert dd.z > aa.z, 'Stair splines must point upward!'
+            front = steps.af([aa, bb, bb + vec3.Z(dd.z - bb.z), aa + vec3.Z(cc.z - aa.z)])
+            top   = steps.af([aa + vec3.Z(cc.z - aa.z), bb + vec3.Z(dd.z - bb.z), dd, cc])
+            lside = steps.af([aa, aa + vec3.Z(cc.z - aa.z), cc])
+            rside = steps.af([dd, bb + vec3.Z(dd.z - bb.z), bb])
+            seams = steps.perimeter((front, top))
+            steps.unwrap_uvs(top, O=(aa + vec3.Z(cc.z - aa.z), vec3.O()), S=vec3.U(2),
+                             seams=seams, uvs=steps.uvs)
+        return TForm.from_meshes(steps)
+
+    def ramp(self, lb, rb, dz=-0.1):
+        dz = vec3.Z(dz)
+        ramp = Mesh()
+        ramp.af([lb[ 0] + dz, rb[ 0] + dz, rb[ 0], lb[ 0]])
+        ramp.af([rb[-1] + dz, lb[-1] + dz, lb[-1], rb[-1]])
+        for ((aa, bb), (cc, dd)) in slide(list(zip(lb, rb)), 2, 1):
+            ramp.af([cc, aa, bb, dd])
+            ramp.af([aa + dz, cc + dz, dd + dz, bb + dz])
+            ramp.af([cc + dz, aa + dz, aa, cc])
+            ramp.af([dd + dz, dd, bb, bb + dz])
+        ramp.uvs = ramp.vertex_uvs(
+            O=(lb[0], vec3.O()), S=vec3.U() * 2,
+            seams=ramp.angle_seams())
+        return TForm.from_meshes(ramp, texture='generic_13')
+
+    def splines(self, a, b, c, d, stepheight=0.1, lmargin=0.001, rmargin=0.001):
+        r = a.d(d)
+        z = d.z - a.z
+        n = int(abs(z) / stepheight)
+        N = loop_normal([a, b, c, d])
+
+        ldu = N.crs(b - a).nrm()
+        ldv = N.crs(d - c).nrm()
+        rdu = ldu.cp()
+        rdv = ldv.cp()
+
+        dw = (d - a).crs(vec3.Z()).nrm().scl(lmargin)
+        lb = Seam((a + dw), (d + dw), n, ldu, ldv).loop()
+
+        dw = (d - a).crs(vec3.Z()).nrm().scl(rmargin)
+        rb = Seam((b - dw), (c - dw), n, rdu, rdv).loop()
+
+        if z < 0:
+            lb.reverse()
+            rb.reverse()
+
+        return lb, rb
+
+    height = 0.04
+
+    def scene(self):
+        vs, fs = self.control.vertices, self.control.faces
+        scene = TForm()
+        for i, ((a, b), (c, d)) in enumerate(self.control._stairs):
+            a, b, c, d = vs[a], vs[b], vs[c], vs[d]
+            lb, rb = self.splines(a, b, d, c, stepheight=self.height)
+            scene.add(self.ramp(lb, rb, dz=-self.height))
+            if not (isnear(a.z, c.z) and isnear(b.z, d.z)):
+                scene.add(self.steps(lb, rb))
+        return scene
+
+
+class Railings(MetaMesh):
+
+    def railing(self, a, b, dz=0.4, dw=0.02):
+        dz = vec3.Z(dz)
+        railing = Mesh.prism([a, b, b + dz, a + dz], dw, 2)
+        railing.uvs = railing.vertex_uvs(
+            O=(a, vec3.O()), S=vec3.U() * 2,
+            seams=railing.angle_seams())
+        return TForm.from_meshes(railing, texture='generic_9')
+
+    def scene(self):
+        vs, fs = self.control.vertices, self.control.faces
+        scene = TForm()
+        for i, (a, b) in enumerate(self.control._railings):
+            scene.add(self.railing(vs[a], vs[b]))
+        return scene
+
+
+'''
 class Railing(MetaMesh):
 
     """Provide a control mesh with a `_railings` attribute"""
@@ -155,8 +248,10 @@ class Stairs(MetaMesh):
         wires = []
 
         for i, (tip, tail) in enumerate(self.control._stairs):
+            print(tip, tail)
 
-            z = vs[fs[tip][0]].z
+            #z = vs[fs[tip][0]].z
+            z = vs[fs[tip[0]][0]].z
             u, v = tail
 
             u, v = self.place(u, v, w, x)
@@ -180,3 +275,4 @@ class Stairs(MetaMesh):
         guide = Model(meshes={'generic_0': [guide]})
 
         return TForm(children=chunks, models=[guide])
+'''

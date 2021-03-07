@@ -95,6 +95,33 @@ class Mesh(Base):
         return data
 
     @classmethod
+    def lattice(cls, nx=3, ny=3, nz=3):
+        mesh = cls()
+        X = np.linspace(-1, 1, nx) if isinstance(nx, int) else nx
+        Y = np.linspace(-1, 1, ny) if isinstance(ny, int) else ny
+        Z = np.linspace(-1, 1, nz) if isinstance(nz, int) else nz
+        for i in range(1, len(X)):
+            x0, x1 = X[i - 1], X[i]
+            for j in range(1, len(Y)):
+                y0, y1 = Y[j - 1], Y[j]
+                for k in range(1, len(Z)):
+                    z0, z1 = Z[k - 1], Z[k]
+                    a, b = vec3(x0, y0, z0), vec3(x1, y0, z0)
+                    c, d = vec3(x1, y1, z0), vec3(x0, y1, z0)
+                    e, f = vec3(x0, y0, z1), vec3(x1, y0, z1)
+                    g, h = vec3(x1, y1, z1), vec3(x0, y1, z1)
+                    mesh.af([a, b, c, d], raise_on_duplicate=False)
+                    mesh.af([b, a, e, f], raise_on_duplicate=False)
+                    mesh.af([a, d, h, e], raise_on_duplicate=False)
+                    mesh.af([e, f, g, h], raise_on_duplicate=False)
+                    mesh.af([c, d, h, g], raise_on_duplicate=False)
+                    mesh.af([b, c, g, f], raise_on_duplicate=False)
+        mesh._X = X
+        mesh._Y = Y
+        mesh._Z = Z
+        return mesh
+
+    @classmethod
     def cube_mesh(cls, r=1, meta='generic_0'):
         """Generate a generate cube mesh instance"""
         mesh = cls()
@@ -118,12 +145,12 @@ class Mesh(Base):
         return mesh
 
     @classmethod
-    def cylinder_mesh(cls, h=1, r=1, n=8, closed=False, meta='generic_0'):
+    def cylinder_mesh(cls, h=2, r=1, n=8, closed=False, meta='generic_0'):
         mesh = cls()
-        a = vec3.O()
-        b = a.ring(r, n)
+        a = vec3.Z(-h / 2)
+        b = a.ring(r, n, False)
         c = a + vec3.Z(h)
-        d = c.ring(r, n)
+        d = c.ring(r, n, False)
         mesh.bridge(b, d, meta=meta)
         if closed:
             mesh.fan(a, b[::-1], meta=meta)
@@ -245,29 +272,36 @@ class Mesh(Base):
 
     @classmethod
     def from_xyz(cls, xyz, faces):
-        """Create Mesh from vertices/faces
+        return cls()._from_xyz(xyz, faces)
+
+    def _from_xyz(self, xyz, faces):
+        """Recreate Mesh in-place from vertices/faces
 
         Args:
             xyz (iterable): Iterable of (x, y, z) tuples
             faces (iterable): Iterable of (index, face) tuples
 
         """
-        mesh = cls()
+        self.clear()
         mapping = {}
         for i, (x, y, z) in enumerate(xyz):
-            mapping[i] = mesh.av(vec3(x, y, z))
+            mapping[i] = self.av(vec3(x, y, z))
         for f, face in faces:
             face = [mapping[v] for v in face]
-            mesh.af(face)
-        return mesh
+            self.af(face)
+        return self
 
-    def smooth(self):
+    def smooth(self, inplace=False):
         """Create new Mesh with smoothing applied"""
         L = self.laplacian()
         xyz, faces = self.to_xyz()
-        return self.from_xyz(xyz - np.matmul(L, xyz), faces)
+        xyz -= np.matmul(L, xyz)
+        if inplace:
+            return self._from_xyz(xyz, faces)
+        else:
+            return self.__class__.from_xyz(xyz, faces)
 
-    def deform(self, constraints):
+    def deform(self, constraints, inplace=False):
         """Create deformation Mesh via constraints
 
         Args:
@@ -288,15 +322,25 @@ class Mesh(Base):
             delta[j, :] = (anchor.x, anchor.y, anchor.z)
         # recover cartesian coordinates from laplacian coordinates
         xyz, _, _, _ = np.linalg.lstsq(L, delta)
-        return self.__class__.from_xyz(xyz, faces)
+        if inplace:
+            #for i, (x, y, z) in enumerate(xyz):
+            #    self.vertices[i].set(x, y, z)
+            #return self
+            return self._from_xyz(xyz, faces)
+        else:
+            return self.__class__.from_xyz(xyz, faces)
 
-    def __init__(self):
+    def clear(self):
+        """Reinitialize data structures"""
         self.vertices = []
         self.faces = []
         self.nface = 0
         self.e2f = {}
         self.v2f = defaultdict(set)
         self.meta = {}
+
+    def __init__(self):
+        self.clear()
 
     def __iter__(self):
         """Yield existing faces and their indices"""
@@ -305,6 +349,7 @@ class Mesh(Base):
                 yield f, face
 
     def face_rings(self):
+        """Generate mapping of faces to their neighbors (1-ring)"""
         f2f = defaultdict(list)
         for f, face in self:
             for u, v in slide(face, 2):
@@ -326,6 +371,7 @@ class Mesh(Base):
         return self._face_tangents
 
     def vertex_rings(self):
+        """Generate mapping of vertices to their neighbors (1-ring)"""
         v2v = defaultdict(set)
         for i, j in self.e2f:
             v2v[i].add(j)
@@ -367,6 +413,8 @@ class Mesh(Base):
 
     def unwrap_uvs(self, f=None, O=None, X=None, Y=None, S=None, seams=None, uvs=None):
         """Recursively generate UV coordinate lookup via angle based flattening
+        NOTE: For sufficiently large meshes, expect recursion errors
+        TODO: Reimplement this without recursion...
 
         Args:
             f (int): Current face index being unwrapped
@@ -501,15 +549,19 @@ class Mesh(Base):
         """Find all faces with matching meta data"""
         return [f for f, face in self if (self.meta[f] == meta)]
 
-    def af(self, loop, meta=None, e=0.00001):
+    def af(self, loop, meta=None, e=0.00001, raise_on_duplicate=True):
         """Add a face to the mesh via a loop of vertices"""
         if not isinstance(loop[0], int):
             loop = [self.av(p, e=e) for p in loop]
         f = len(self.faces)
         for i, j in slide(loop, 2):
-            self.v2f[i].add(f)
-            self.e2f[(i, j)] = f
-            self.meta[f] = meta
+            if (i, j) in self.e2f:
+                if raise_on_duplicate:
+                    raise ValueError
+            else:
+                self.v2f[i].add(f)
+                self.e2f[(i, j)] = f
+                self.meta[f] = meta
         self.faces.append(loop)
         self.nface += 1
         return f
@@ -614,11 +666,12 @@ class Mesh(Base):
             return
         else:
             face = self.faces[f]
+            # is this an implicit quad-only assumption?
             k = face.index(i) - 2
             return face[k], face[k + 1]
 
     def vertexloop(self, i, j, loop=None):
-        """Select a sequence of vertices without turning"""
+        """Select a sequence of consecutive edges without turning"""
         raise
 
     def edgeloop(self, i, j, loop=None):
@@ -643,9 +696,11 @@ class Mesh(Base):
             self.rf(f)
             v = face.index(i) - 2
             if face[v] == j:
+                # is this path for tri-only?
                 new_faces.append(self.af([i, u, face[v + 1]], meta=meta))
                 new_faces.append(self.af([u, j, face[v + 1]], meta=meta))
             else:
+                # is this path for quad-only?
                 w = face[v + 1]
                 v = face[v]
                 x = self.av(self.vertices[w].lerp(self.vertices[v], a), e=e)
