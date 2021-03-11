@@ -180,6 +180,9 @@ class MainShader(ShaderProgram):
         fs = os.path.join(os.path.dirname(__file__), 'shaders', 'main.fs')
         signature = ('in_texcoord_0', 'in_normal', 'in_position')
         primitive = moderngl.TRIANGLES
+        # TODO: why are these missing when installed?
+        assert os.path.exists(vs), f'missing vertex shader: {vs}'
+        assert os.path.exists(fs), f'missing fragment shader: {fs}'
         super().__init__(vs=vs, fs=fs, signature=signature, primitive=primitive)
         self.ka, self.kd, self.ks = 0.1, 0.5, 0.0
 

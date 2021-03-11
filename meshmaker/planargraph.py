@@ -55,6 +55,10 @@ class planargraph:
                 o.ne(i, j, **e)
         return o
 
+    def eq(self, o):
+        """Check for pairwise correspondence between edges (i.e. equality)"""
+        pass
+
     def __init__(self, segs=None, loops=None, epsilon=0.00001):
         self.vertices = []
         self.vertex_count = 0
@@ -460,6 +464,8 @@ class planargraph:
     def polygon(self):
         # TODO: this is basically deprecated by loop_tree
         loops = [[self.vertices[i].cp() for i in l] for l in self.loops()]
+        if not loops:
+            return [], []
         for loop in loops:
             if loop_normal(loop).z < 0:
                 loop.reverse()

@@ -3,6 +3,9 @@ import setuptools
 with open("README.md", "r") as fh:
     long_description = fh.read()
 
+packages = setuptools.find_packages()
+print('packages', packages)
+
 setuptools.setup(
     name="meshmaker",
     version="0.0.1",
@@ -12,7 +15,7 @@ setuptools.setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/ctogle/meshmaker",
-    packages=setuptools.find_packages(),
+    packages=packages,
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: MIT License",
